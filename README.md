@@ -1,2 +1,5 @@
 # School-Assigments
-Repository for projects my teachers taked me with, split into branches to keep my profile cleaan~
+
+This repository exists so my github profile isn't thrashing with small assigments, it misses a lot, cuz I created it far too late.
+
+If you're a teacher and I failed to send up correct branch, resulting in you ending up here, I feel sincerely sorry, and good luck
