@@ -1,5 +1,5 @@
-# School-Assigments
+# Memory Game
 
-This repository exists so my github profile isn't thrashing with small assigments, it misses a lot, cuz I created it far too late.
+Very old project, features simple memory game.
 
-If you're a teacher and I failed to send up correct branch, resulting in you ending up here, I feel sincerely sorry, and good luck
+I dont quite advice using it, as when making it I wasn't on level where I'd make it a simple copy paste, furthermore I'm too lazy to currently improve it

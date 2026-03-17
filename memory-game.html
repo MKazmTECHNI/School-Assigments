@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memory Game</title>
+
+    <!-- CHANGE PATHS HERE IF YOU FILES REDIRECTED TO FOLDERS -->
+    <link rel="stylesheet" href="./memory-game.css" />
+    <script src="./memory-game.js" defer></script>
+  </head>
+  <body>
+    <div class="whole-memory-game">
+      <div class="memory-game-settings">
+        <p>
+          Choose how much tiles you want to play with! (Max:
+          <span class="memory-table-size">Apparently Error Occured</span>)
+        </p>
+        <input class="memory-tiles-amount-input" type="number" />
+        <button class="memory-tiles-amount-button">Submit And Play!</button>
+      </div>
+      <div class="memory-game-container">
+        <div class="memory-stats">
+          <p>Moves Made: <span class="memory-moves">0</span></p>
+          <p>Tiles Matched: <span class="memory-pairs">0</span></p>
+        </div>
+        <div class="memory-game"></div>
+        <button class="memory-reset">Reset Game</button>
+      </div>
+      <p class="memory-result-message">mesedż</p>
+    </div>
+  </body>
+</html>
+
+<!-- These all "memory-"" in every class is so it wouldn't collide 
+  if anyone would want to paste my code into their website -->

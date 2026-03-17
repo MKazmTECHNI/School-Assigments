@@ -1,0 +1,154 @@
+/* Its basically whole reset.css */
+.whole-memory-game * {
+  margin: 0px;
+  padding: 0px;
+  box-sizing: border-box;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+:root {
+  --backgound-color: #1b1b1b;
+  --containers-color: #353535;
+  --tiles-color: #4d4d4d;
+  --tile-shown-color: #aaa;
+  --inner-color: #ffffff;
+}
+
+body {
+  background: var(--backgound-color);
+  color: var(--inner-color);
+}
+
+div.memory-game-settings {
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+
+  gap: 14px;
+  padding: 12px;
+}
+
+.memory-tiles-amount-input {
+  width: 77px;
+  text-align: center;
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.memory-tiles-amount-button {
+  padding: 10px;
+  border-radius: 14px;
+  background-color: #1b1b1b;
+  color: #dcdcdc;
+  border: 1px solid #fff;
+}
+
+.memory-stats {
+  background: var(--containers-color);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 35px;
+  padding: 14px;
+  border-radius: 14px;
+}
+
+.memory-game-container {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 28px;
+  padding: 42px 63px;
+}
+
+.memory-game {
+  background: var(--containers-color);
+  width: 49vw;
+
+  display: flex;
+  justify-content: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px;
+}
+
+.memory-tile {
+  background: var(--inner-color);
+  min-width: 10vw;
+  aspect-ratio: 1/1; /* To wgl jest świetne, czemu się tego dopiero nauczyłem */
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0;
+  font-size: 3em;
+  transition: 0.25s;
+}
+
+.memory-tile::after {
+  content: " ";
+  position: absolute;
+  inset: 0;
+  background: var(--tiles-color);
+  transition: 0.5s;
+  opacity: 1;
+}
+
+.memory-reset {
+  color: var(--backgound-color);
+  padding: 14px;
+  border-radius: 14px;
+  font-weight: bold;
+  letter-spacing: 0.7px;
+}
+
+.memory-selected {
+  transition: 0.56s;
+  z-index: 7;
+}
+.memory-selected::after {
+  /* content: none; */
+  opacity: 0;
+  transition: 0.35s;
+}
+.memory-shown {
+  transition: 0.56s;
+  scale: 1.056;
+  background-color: #ababab;
+}
+.memory-shown::after {
+  /* content: none; */
+  opacity: 0;
+  transition: 0.35s;
+}
+
+p.memory-result-message {
+  color: var(--inner-color);
+  font-weight: bolder;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  text-align: center;
+  font-size: 1.95rem;
+}
+
+@media only screen and (max-width: 525px) {
+  .memory-game {
+    width: 93vw;
+  }
+  .memory-tile {
+    font-size: 2em;
+    flex: 0 0;
+  }
+  p {
+    font-size: 1.25em;
+  }
+  input {
+    font-size: 1.75em;
+  }
+}
