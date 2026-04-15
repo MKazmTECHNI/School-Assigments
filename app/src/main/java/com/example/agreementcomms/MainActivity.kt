@@ -22,12 +22,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -552,13 +554,21 @@ private fun ChatPane(
     onOpenSidebar: () -> Unit
 ) {
     var input by rememberSaveable { mutableStateOf("") }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
     val visibleMessages = if (searchQuery.isBlank()) {
         messages
     } else {
         messages.filter {
             it.author.contains(searchQuery, ignoreCase = true) ||
                 it.text.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    LaunchedEffect(messages.size, searchQuery) {
+        if (searchQuery.isBlank() && visibleMessages.isNotEmpty()) {
+            listState.animateScrollToItem(visibleMessages.lastIndex)
         }
     }
 
@@ -581,7 +591,8 @@ private fun ChatPane(
                 Text(
                     text = selectedChannel,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = "Serwer: $serverName",
@@ -599,6 +610,12 @@ private fun ChatPane(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            IconButton(onClick = {
+                showSearch = !showSearch
+                if (!showSearch) searchQuery = ""
+            }) {
+                Text("🔍")
+            }
         }
 
         if (!backendError.isNullOrBlank()) {
@@ -612,17 +629,20 @@ private fun ChatPane(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            label = { Text("Szukaj w kanale") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp)
-        )
+        if (showSearch) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Szukaj w kanale") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+            )
+        }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -702,6 +722,12 @@ private fun MessageItem(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
                 Text(text = message.text, style = MaterialTheme.typography.bodyLarge)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = message.time,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -742,6 +768,7 @@ private fun SettingsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .statusBarsPadding()
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
