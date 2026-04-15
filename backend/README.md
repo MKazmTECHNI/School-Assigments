@@ -17,6 +17,14 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+Windows alternative:
+
+```bash
+py -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Note: Android emulator uses `http://10.0.2.2:8000/` to reach host localhost.
+
 ## Endpoints
 
 - `GET /health`
