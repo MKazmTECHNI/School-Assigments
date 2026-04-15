@@ -1,0 +1,41 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "git-recovery-and-push",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rebase --abort && git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" checkout RN-Accordance && git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" remote set-url origin https://github.com/MKazmTECHNI/School-Assigments.git && git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" push -u origin RN-Accordance",
+			"group": "build"
+		},
+		{
+			"label": "git-inspect",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rev-parse --abbrev-ref HEAD; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" remote -v",
+			"group": "build"
+		},
+		{
+			"label": "git-abort-rebase",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rebase --abort; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rev-parse --abbrev-ref HEAD; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1",
+			"group": "build"
+		},
+		{
+			"label": "git-status-after-cleanup",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" log -1 --pretty=format:\"%H%n%s\"",
+			"group": "build"
+		},
+		{
+			"label": "git-finalize-and-push",
+			"type": "shell",
+			"command": "$repo=\"C:/Users/eritn/AndroidStudioProjects/AgreementComms\"; $remoteUrl=\"https://github.com/MKazmTECHNI/School-Assigments.git\"; git -C $repo rebase --abort 2>$null; git -C $repo checkout RN-Accordance; git -C $repo remote set-url origin $remoteUrl; $changes = git -C $repo status --porcelain; if ($changes) { git -C $repo add -A; git -C $repo commit -m \"chore: checkpoint local changes on RN-Accordance\" }; $pushOutput = git -C $repo push -u origin RN-Accordance 2>&1; $pushCode = $LASTEXITCODE; $pushOutput; if ($pushCode -ne 0 -and ($pushOutput -match \"non-fast-forward|fetch first|rejected\")) { git -C $repo push --force-with-lease -u origin RN-Accordance }; git -C $repo status -b --porcelain=v1; git -C $repo rev-parse --abbrev-ref HEAD; git -C $repo log -1 --pretty=format:\"%H%n%s\"; git -C $repo remote get-url origin",
+			"group": "build"
+		},
+		{
+			"label": "git-prepare-commit",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rebase --abort 2>$null; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" checkout RN-Accordance; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" remote set-url origin https://github.com/MKazmTECHNI/School-Assigments.git; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" add -A; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" commit -m \"chore: checkpoint local changes on RN-Accordance\"; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1",
+			"group": "build"
+		}
+	]
+}
