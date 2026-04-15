@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -38,6 +40,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -98,6 +101,13 @@ fun AgreementApp() {
     var section by rememberSaveable { mutableStateOf(MainSection.Chat) }
 
     val conversations = remember { buildSampleConversations() }
+    val unreadCounts = remember {
+        mutableStateMapOf(
+            conversationKey("general", "#offtopic") to 3,
+            conversationKey("mobile-dev", "#android") to 2,
+            conversationKey("szkola", "#terminy") to 1
+        )
+    }
 
     if (!isLoggedIn) {
         LoginScreen(
@@ -119,9 +129,14 @@ fun AgreementApp() {
                 selectedServerId = serverId
                 val firstChannel = servers.first { it.id == serverId }.channels.first()
                 selectedChannel = firstChannel
+                unreadCounts[conversationKey(serverId, firstChannel)] = 0
             },
             selectedChannel = selectedChannel,
-            onChannelSelected = { selectedChannel = it },
+            onChannelSelected = {
+                selectedChannel = it
+                unreadCounts[conversationKey(selectedServerId, it)] = 0
+            },
+            unreadCounts = unreadCounts,
             messages = activeMessages,
             onSendMessage = { messageText ->
                 conversations
@@ -199,6 +214,7 @@ private fun MainScreen(
     onServerSelected: (String) -> Unit,
     selectedChannel: String,
     onChannelSelected: (String) -> Unit,
+    unreadCounts: Map<String, Int>,
     messages: List<Message>,
     onSendMessage: (String) -> Unit
 ) {
@@ -236,6 +252,7 @@ private fun MainScreen(
                         onSectionChange(MainSection.Chat)
                         scope.launch { drawerState.close() }
                     },
+                    unreadCounts = unreadCounts,
                     onClose = { scope.launch { drawerState.close() } }
                 )
             }
@@ -271,6 +288,7 @@ private fun SidebarDrawer(
     selectedServer: Server,
     selectedChannel: String,
     onChannelSelected: (String) -> Unit,
+    unreadCounts: Map<String, Int>,
     onClose: () -> Unit
 ) {
     Column(
@@ -311,7 +329,8 @@ private fun SidebarDrawer(
                     .fillMaxHeight(),
                 server = selectedServer,
                 selectedChannel = selectedChannel,
-                onChannelSelected = onChannelSelected
+                onChannelSelected = onChannelSelected,
+                unreadCounts = unreadCounts
             )
         }
 
@@ -413,7 +432,8 @@ private fun ChannelSidebar(
     modifier: Modifier = Modifier,
     server: Server,
     selectedChannel: String,
-    onChannelSelected: (String) -> Unit
+    onChannelSelected: (String) -> Unit,
+    unreadCounts: Map<String, Int>
 ) {
     Surface(
         modifier = modifier,
@@ -445,12 +465,33 @@ private fun ChannelSidebar(
                             MaterialTheme.colorScheme.surfaceContainerLow
                         }
                     ) {
-                        Text(
-                            text = channel,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = channel,
+                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                            val unread = unreadCounts[conversationKey(server.id, channel)] ?: 0
+                            if (!selected && unread > 0) {
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Text(
+                                        text = unread.toString(),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -469,6 +510,15 @@ private fun ChatPane(
     onOpenSidebar: () -> Unit
 ) {
     var input by rememberSaveable { mutableStateOf("") }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val visibleMessages = if (searchQuery.isBlank()) {
+        messages
+    } else {
+        messages.filter {
+            it.author.contains(searchQuery, ignoreCase = true) ||
+                it.text.contains(searchQuery, ignoreCase = true)
+        }
+    }
 
     Column(
         modifier = modifier
@@ -506,6 +556,16 @@ private fun ChatPane(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("Szukaj w kanale") },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+        )
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -513,8 +573,15 @@ private fun ChatPane(
                 .padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(messages) { message ->
-                MessageItem(message = message)
+            itemsIndexed(visibleMessages) { index, message ->
+                val groupedWithPrevious =
+                    index > 0 &&
+                        visibleMessages[index - 1].author == message.author &&
+                        visibleMessages[index - 1].isMine == message.isMine
+                MessageItem(
+                    message = message,
+                    groupedWithPrevious = groupedWithPrevious
+                )
             }
         }
 
@@ -547,26 +614,66 @@ private fun ChatPane(
 }
 
 @Composable
-private fun MessageItem(message: Message) {
+private fun MessageItem(
+    message: Message,
+    groupedWithPrevious: Boolean
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start
     ) {
+        if (!message.isMine) {
+            if (groupedWithPrevious) {
+                Spacer(modifier = Modifier.width(34.dp))
+            } else {
+                AvatarBubble(author = message.author)
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+
         Card(
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(0.82f)
         ) {
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                Text(
-                    text = "${message.author} • ${message.time}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (message.isMine) FontWeight.Bold else FontWeight.Normal
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+                if (!groupedWithPrevious) {
+                    Text(
+                        text = "${message.author} • ${message.time}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (message.isMine) FontWeight.Bold else FontWeight.Normal
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
                 Text(text = message.text, style = MaterialTheme.typography.bodyLarge)
             }
         }
+    }
+}
+
+@Composable
+private fun AvatarBubble(author: String) {
+    val palette = listOf(
+        MaterialTheme.colorScheme.primary,
+        MaterialTheme.colorScheme.secondary,
+        MaterialTheme.colorScheme.tertiary,
+        MaterialTheme.colorScheme.surfaceContainerHighest
+    )
+    val color = palette[kotlin.math.abs(author.hashCode()) % palette.size]
+
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(color),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = author.firstOrNull()?.uppercase() ?: "?",
+            color = MaterialTheme.colorScheme.onPrimary,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
