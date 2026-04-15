@@ -6,8 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,11 +52,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.example.agreementcomms.ui.theme.AgreementCommsTheme
 import kotlinx.coroutines.launch
 
@@ -632,12 +634,76 @@ private fun MessageItem(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
                 Text(text = message.text, style = MaterialTheme.typography.bodyLarge)
+
+                if (message.attachments.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        message.attachments.forEach { attachment ->
+                            AttachmentItem(attachment = attachment)
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = message.time,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentItem(attachment: MessageAttachment) {
+    when (attachment.type) {
+        AttachmentType.Image -> {
+            if (attachment.url != null) {
+                AsyncImage(
+                    model = attachment.url,
+                    contentDescription = attachment.name,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+
+        AttachmentType.File -> {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "📄 ${attachment.name}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        attachment.meta?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Pobierz",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }
@@ -741,8 +807,21 @@ data class Message(
     val author: String,
     val text: String,
     val time: String,
-    val isMine: Boolean
+    val isMine: Boolean,
+    val attachments: List<MessageAttachment> = emptyList()
 )
+
+data class MessageAttachment(
+    val type: AttachmentType,
+    val name: String,
+    val url: String? = null,
+    val meta: String? = null
+)
+
+enum class AttachmentType {
+    Image,
+    File
+}
 
 enum class MainSection {
     Chat,
@@ -773,13 +852,37 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
         ),
         conversationKey("general", "#offtopic") to mutableStateListOf(
             Message("Kuba", "wrzucam mema dnia", "19:21", false),
-            Message("Kuba", "[meme: 'when code works on first run']", "19:21", false),
+            Message(
+                "Kuba",
+                "idealne podsumowanie dnia",
+                "19:21",
+                false,
+                attachments = listOf(
+                    MessageAttachment(
+                        type = AttachmentType.Image,
+                        name = "meme_first_try.jpg",
+                        url = "https://images.unsplash.com/photo-1517336714739-489689fd1ca8?auto=format&fit=crop&w=1000&q=80"
+                    )
+                )
+            ),
             Message("Ola", "to fake, takie rzeczy nie istnieją", "19:22", false),
             Message("Bartek", "dokładnie, to AI-generated", "19:23", false),
             Message("Natalia", "xDDD", "19:23", false),
             Message("Kuba", "mam jeszcze jednego z kotem programistą", "19:24", false),
             Message("Ola", "dawaj", "19:24", false),
-            Message("Kuba", "[meme: kot przy 4 monitorach]", "19:25", false),
+            Message(
+                "Kuba",
+                "kot dev edition",
+                "19:25",
+                false,
+                attachments = listOf(
+                    MessageAttachment(
+                        type = AttachmentType.Image,
+                        name = "cat_dev.png",
+                        url = "https://images.unsplash.com/photo-1511044568932-338cba0ad803?auto=format&fit=crop&w=1000&q=80"
+                    )
+                )
+            ),
             Message("Bartek", "to ja po 3 kawie", "19:25", false),
             Message("Natalia", "i z deadline'em za 15 minut", "19:26", false),
             Message("Ola", "literally", "19:26", false),
@@ -809,7 +912,19 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Bartek", "ta z małym logo?", "13:41", false),
             Message("Natalia", "tak", "13:41", false),
             Message("Ola", "chyba została w sali obok okna", "13:42", false),
-            Message("Natalia", "ratujecie życie, dzięki", "13:43", false)
+            Message(
+                "Natalia",
+                "ratujecie życie, dzięki",
+                "13:43",
+                false,
+                attachments = listOf(
+                    MessageAttachment(
+                        type = AttachmentType.File,
+                        name = "lista_zakupow_weekend.pdf",
+                        meta = "PDF • 1.2 MB"
+                    )
+                )
+            )
         ),
         conversationKey("szkola", "#terminy") to mutableStateListOf(
             Message("Kuba", "Jutro pierwsza lekcja odwołana czy plotka?", "11:02", false),
