@@ -4,8 +4,11 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Part
+import okhttp3.MultipartBody
 
 data class ApiServer(
     val id: String,
@@ -22,12 +25,34 @@ data class ApiMessage(
     val id: String,
     val author: String,
     val text: String,
-    val time: String
+    val time: String,
+    val attachment: ApiAttachmentResponse? = null
+)
+
+data class ApiAttachmentResponse(
+    val type: String,
+    val name: String,
+    val url: String? = null
+)
+
+data class ApiAttachmentRequest(
+    val type: String,
+    val name: String,
+    val path: String
+)
+
+data class UploadResponse(
+    val type: String,
+    val name: String,
+    val path: String,
+    val url: String,
+    val contentType: String? = null
 )
 
 data class CreateMessageRequest(
     val author: String,
-    val text: String
+    val text: String,
+    val attachment: ApiAttachmentRequest? = null
 )
 
 interface AccordanceApi {
@@ -49,11 +74,17 @@ interface AccordanceApi {
         @Path("channelId") channelId: String,
         @Body request: CreateMessageRequest
     ): ApiMessage
+
+    @Multipart
+    @POST("uploads")
+    suspend fun uploadFile(
+        @Part file: MultipartBody.Part
+    ): UploadResponse
 }
 
 object AccordanceApiClient {
     // Android emulator -> host machine localhost
-    private const val BASE_URL = "http://10.0.2.2:8000/"
+    const val BASE_URL = "http://10.0.2.2:8000/"
 
     val api: AccordanceApi by lazy {
         Retrofit.Builder()

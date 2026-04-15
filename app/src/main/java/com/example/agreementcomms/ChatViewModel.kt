@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import com.example.agreementcomms.data.ApiAttachmentRequest
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.agreementcomms.data.ChatRepository
@@ -19,7 +20,16 @@ data class ChatUiState(
     val selectedChannel: String = defaultServers().first().channels.first(),
     val section: MainSection = MainSection.Chat,
     val backendConnected: Boolean = false,
-    val backendError: String? = null
+    val backendError: String? = null,
+    val composerAttachment: ComposerAttachment? = null
+)
+
+data class ComposerAttachment(
+    val type: AttachmentType,
+    val name: String,
+    val localUri: String,
+    val mimeType: String,
+    val sizeLabel: String? = null
 )
 
 class ChatViewModel(
@@ -75,29 +85,74 @@ class ChatViewModel(
         unreadCounts[conversationKey(uiState.selectedServerId, channel)] = 0
     }
 
-    fun sendMessage(text: String) {
+    fun setComposerAttachment(attachment: ComposerAttachment?) {
+        uiState = uiState.copy(composerAttachment = attachment)
+    }
+
+    fun sendMessage(
+        text: String,
+        attachmentBytes: ByteArray? = null,
+        attachmentFileName: String? = null,
+        attachmentMimeType: String? = null
+    ) {
         val messageText = text.trim()
-        if (messageText.isBlank()) return
+        val localAttachment = uiState.composerAttachment
+        if (messageText.isBlank() && localAttachment == null) return
+
+        val finalText = if (messageText.isBlank()) "Załącznik" else messageText
 
         val convKey = conversationKey(uiState.selectedServerId, uiState.selectedChannel)
         conversations.getOrPut(convKey) { androidx.compose.runtime.mutableStateListOf() }
             .add(
                 Message(
                     author = uiState.nickname,
-                    text = messageText,
+                    text = finalText,
                     time = "teraz",
-                    isMine = true
+                    isMine = true,
+                    attachments = localAttachment?.let {
+                        listOf(
+                            MessageAttachment(
+                                type = it.type,
+                                name = it.name,
+                                url = it.localUri,
+                                meta = it.sizeLabel
+                            )
+                        )
+                    } ?: emptyList()
                 )
             )
+
+        uiState = uiState.copy(composerAttachment = null)
 
         val apiChannelId = channelApiIds[convKey] ?: return
         viewModelScope.launch {
             try {
+                val uploadedAttachment = if (
+                    attachmentBytes != null &&
+                    attachmentFileName != null &&
+                    attachmentMimeType != null
+                ) {
+                    repository.uploadAttachment(
+                        fileName = attachmentFileName,
+                        mimeType = attachmentMimeType,
+                        content = attachmentBytes
+                    )
+                } else {
+                    null
+                }
+
                 repository.sendMessage(
                     serverId = uiState.selectedServerId,
                     channelId = apiChannelId,
                     author = uiState.nickname,
-                    text = messageText
+                    text = finalText,
+                    attachment = uploadedAttachment?.let {
+                        ApiAttachmentRequest(
+                            type = it.type,
+                            name = it.name,
+                            path = it.path
+                        )
+                    }
                 )
                 uiState = uiState.copy(backendConnected = true, backendError = null)
             } catch (ex: Exception) {

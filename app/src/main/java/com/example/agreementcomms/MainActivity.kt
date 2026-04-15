@@ -1,9 +1,16 @@
 package com.example.agreementcomms
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -55,12 +62,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.example.agreementcomms.ui.theme.AgreementCommsTheme
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,6 +89,68 @@ class MainActivity : ComponentActivity() {
 fun AgreementApp() {
     val vm: ChatViewModel = viewModel()
     val state = vm.uiState
+    val context = LocalContext.current
+
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+
+    val galleryPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            vm.setComposerAttachment(
+                ComposerAttachment(
+                    type = AttachmentType.Image,
+                    name = resolveFileName(context, uri) ?: "image.jpg",
+                    localUri = uri.toString(),
+                    mimeType = resolveMimeType(context, uri),
+                    sizeLabel = resolveSizeLabel(context, uri)
+                )
+            )
+        }
+    }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            vm.setComposerAttachment(
+                ComposerAttachment(
+                    type = if (resolveMimeType(context, uri).startsWith("image/")) AttachmentType.Image else AttachmentType.File,
+                    name = resolveFileName(context, uri) ?: "file",
+                    localUri = uri.toString(),
+                    mimeType = resolveMimeType(context, uri),
+                    sizeLabel = resolveSizeLabel(context, uri)
+                )
+            )
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && pendingCameraUri != null) {
+            val uri = pendingCameraUri!!
+            vm.setComposerAttachment(
+                ComposerAttachment(
+                    type = AttachmentType.Image,
+                    name = resolveFileName(context, uri) ?: "camera_photo.jpg",
+                    localUri = uri.toString(),
+                    mimeType = resolveMimeType(context, uri),
+                    sizeLabel = resolveSizeLabel(context, uri)
+                )
+            )
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            val uri = createTempCameraUri(context)
+            pendingCameraUri = uri
+            cameraLauncher.launch(uri)
+        }
+    }
 
     if (!state.isLoggedIn) {
         LoginScreen(
@@ -98,8 +171,45 @@ fun AgreementApp() {
             unreadCounts = vm.unreadCounts,
             backendConnected = state.backendConnected,
             backendError = state.backendError,
+            composerAttachment = state.composerAttachment,
+            onPickFromGallery = {
+                galleryPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onPickFile = {
+                filePicker.launch(arrayOf("*/*"))
+            },
+            onTakePhoto = {
+                val hasPermission = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+
+                if (hasPermission) {
+                    val uri = createTempCameraUri(context)
+                    pendingCameraUri = uri
+                    cameraLauncher.launch(uri)
+                } else {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                }
+            },
+            onClearComposerAttachment = { vm.setComposerAttachment(null) },
             messages = vm.activeMessages(),
-            onSendMessage = vm::sendMessage
+            onSendMessage = { text ->
+                val attachment = state.composerAttachment
+                if (attachment != null) {
+                    val bytes = readUriBytes(context, Uri.parse(attachment.localUri))
+                    vm.sendMessage(
+                        text = text,
+                        attachmentBytes = bytes,
+                        attachmentFileName = attachment.name,
+                        attachmentMimeType = attachment.mimeType
+                    )
+                } else {
+                    vm.sendMessage(text = text)
+                }
+            }
         )
     }
 }
@@ -167,6 +277,11 @@ private fun MainScreen(
     unreadCounts: Map<String, Int>,
     backendConnected: Boolean,
     backendError: String?,
+    composerAttachment: ComposerAttachment?,
+    onPickFromGallery: () -> Unit,
+    onPickFile: () -> Unit,
+    onTakePhoto: () -> Unit,
+    onClearComposerAttachment: () -> Unit,
     messages: List<Message>,
     onSendMessage: (String) -> Unit
 ) {
@@ -220,6 +335,11 @@ private fun MainScreen(
                 onSendMessage = onSendMessage,
                 backendConnected = backendConnected,
                 backendError = backendError,
+                composerAttachment = composerAttachment,
+                onPickFromGallery = onPickFromGallery,
+                onPickFile = onPickFile,
+                onTakePhoto = onTakePhoto,
+                onClearComposerAttachment = onClearComposerAttachment,
                 onOpenSidebar = { scope.launch { drawerState.open() } }
             )
 
@@ -463,6 +583,11 @@ private fun ChatPane(
     onSendMessage: (String) -> Unit,
     backendConnected: Boolean,
     backendError: String?,
+    composerAttachment: ComposerAttachment?,
+    onPickFromGallery: () -> Unit,
+    onPickFile: () -> Unit,
+    onTakePhoto: () -> Unit,
+    onClearComposerAttachment: () -> Unit,
     onOpenSidebar: () -> Unit
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -573,11 +698,57 @@ private fun ChatPane(
             }
         }
 
+        if (composerAttachment != null) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (composerAttachment.type == AttachmentType.Image) {
+                                "🖼 ${composerAttachment.name}"
+                            } else {
+                                "📎 ${composerAttachment.name}"
+                            },
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        composerAttachment.sizeLabel?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    TextButton(onClick = onClearComposerAttachment) {
+                        Text("Usuń")
+                    }
+                }
+            }
+        }
+
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(onClick = onPickFromGallery) {
+                Text("🖼")
+            }
+            IconButton(onClick = onTakePhoto) {
+                Text("📷")
+            }
+            IconButton(onClick = onPickFile) {
+                Text("📎")
+            }
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
@@ -587,7 +758,7 @@ private fun ChatPane(
             )
             Button(
                 onClick = {
-                    if (input.isNotBlank()) {
+                    if (input.isNotBlank() || composerAttachment != null) {
                         onSendMessage(input.trim())
                         input = ""
                     }
@@ -595,7 +766,7 @@ private fun ChatPane(
                 modifier = Modifier.height(56.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Wyślij")
+                Text("➤")
             }
         }
     }
@@ -969,5 +1140,55 @@ fun defaultServers(): List<Server> {
             channels = listOf("#projekt", "#terminy", "#pomoc")
         )
     )
+}
+
+private fun createTempCameraUri(context: Context): Uri {
+    val fileName = "camera_${System.currentTimeMillis()}.jpg"
+    val imagesDir = File(context.cacheDir, "camera")
+    if (!imagesDir.exists()) imagesDir.mkdirs()
+    val imageFile = File(imagesDir, fileName)
+    return FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        imageFile
+    )
+}
+
+private fun resolveFileName(context: Context, uri: Uri): String? {
+    val projection = arrayOf(android.provider.OpenableColumns.DISPLAY_NAME)
+    context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) {
+            return cursor.getString(index)
+        }
+    }
+    return uri.lastPathSegment
+}
+
+private fun resolveSizeLabel(context: Context, uri: Uri): String? {
+    val projection = arrayOf(android.provider.OpenableColumns.SIZE)
+    context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+        if (index >= 0 && cursor.moveToFirst()) {
+            val bytes = cursor.getLong(index)
+            if (bytes > 0) {
+                val kb = bytes / 1024.0
+                return if (kb < 1024) {
+                    String.format("%.0f KB", kb)
+                } else {
+                    String.format("%.1f MB", kb / 1024.0)
+                }
+            }
+        }
+    }
+    return null
+}
+
+private fun resolveMimeType(context: Context, uri: Uri): String {
+    return context.contentResolver.getType(uri) ?: "application/octet-stream"
+}
+
+private fun readUriBytes(context: Context, uri: Uri): ByteArray? {
+    return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 }
 
