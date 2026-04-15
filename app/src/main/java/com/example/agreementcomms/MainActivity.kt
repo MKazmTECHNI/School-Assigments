@@ -54,7 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.agreementcomms.data.AccordanceApiClient
+import com.example.agreementcomms.data.ChatRepository
 import com.example.agreementcomms.ui.theme.AgreementCommsTheme
 import kotlinx.coroutines.launch
 
@@ -75,6 +75,7 @@ fun AgreementApp() {
     var isLoggedIn by rememberSaveable { mutableStateOf(false) }
     var nickname by rememberSaveable { mutableStateOf("") }
     val appScope = rememberCoroutineScope()
+    val repository = remember { ChatRepository() }
 
     var servers by remember { mutableStateOf(defaultServers()) }
 
@@ -110,7 +111,7 @@ fun AgreementApp() {
             if (isLoggedIn && !backendTried) {
                 backendTried = true
                 try {
-                    val payload = fetchBackendBootstrap(nickname)
+                    val payload = repository.fetchBackendBootstrap(nickname)
                     if (payload.servers.isNotEmpty()) {
                         servers = payload.servers
                         conversations.clear()
@@ -170,13 +171,11 @@ fun AgreementApp() {
                 if (apiChannelId != null) {
                     appScope.launch {
                         try {
-                            AccordanceApiClient.api.createMessage(
+                            repository.sendMessage(
                                 serverId = selectedServerId,
                                 channelId = apiChannelId,
-                                request = com.example.agreementcomms.data.CreateMessageRequest(
-                                    author = nickname,
-                                    text = messageText
-                                )
+                                author = nickname,
+                                text = messageText
                             )
                             backendConnected = true
                             backendError = null
@@ -794,14 +793,14 @@ private fun SettingsScreen(
     }
 }
 
-private data class Server(
+data class Server(
     val id: String,
     val name: String,
     val icon: String,
     val channels: List<String>
 )
 
-private data class Message(
+data class Message(
     val author: String,
     val text: String,
     val time: String,
@@ -813,7 +812,7 @@ private enum class MainSection {
     Settings
 }
 
-private fun conversationKey(serverId: String, channel: String): String = "$serverId|$channel"
+fun conversationKey(serverId: String, channel: String): String = "$serverId|$channel"
 
 private fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
     return mutableMapOf(
@@ -920,54 +919,3 @@ private fun defaultServers(): List<Server> {
     )
 }
 
-private data class BackendBootstrap(
-    val servers: List<Server>,
-    val conversations: Map<String, SnapshotStateList<Message>>,
-    val channelApiIds: Map<String, String>
-)
-
-private suspend fun fetchBackendBootstrap(nickname: String): BackendBootstrap {
-    val api = AccordanceApiClient.api
-    val apiServers = api.getServers()
-
-    val mappedServers = mutableListOf<Server>()
-    val mappedConversations = mutableMapOf<String, SnapshotStateList<Message>>()
-    val channelApiIds = mutableMapOf<String, String>()
-
-    for (server in apiServers) {
-        val channels = api.getChannels(server.id)
-        mappedServers.add(
-            Server(
-                id = server.id,
-                name = server.name,
-                icon = server.icon,
-                channels = channels.map { it.name }
-            )
-        )
-
-        for (channel in channels) {
-            val key = conversationKey(server.id, channel.name)
-            channelApiIds[key] = channel.id
-
-            val messages = api.getMessages(server.id, channel.id)
-            mappedConversations[key] = mutableStateListOf<Message>().apply {
-                addAll(
-                    messages.map {
-                        Message(
-                            author = it.author,
-                            text = it.text,
-                            time = it.time,
-                            isMine = it.author.equals(nickname, ignoreCase = true)
-                        )
-                    }
-                )
-            }
-        }
-    }
-
-    return BackendBootstrap(
-        servers = mappedServers,
-        conversations = mappedConversations,
-        channelApiIds = channelApiIds
-    )
-}
