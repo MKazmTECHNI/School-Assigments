@@ -1,20 +1,21 @@
 import os
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine, func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 from werkzeug.utils import secure_filename
 
 load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+pymysql://root:root@127.0.0.1:3306/accordance",
-)
+_DATABASE_URL_FROM_ENV = os.getenv("DATABASE_URL")
+DATABASE_URL = _DATABASE_URL_FROM_ENV or "mysql+pymysql://root:root@127.0.0.1:3306/accordance"
+SQLITE_FALLBACK_URL = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'accordance.db')}"
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -52,13 +53,29 @@ class MessageModel(Base):
     author: Mapped[str] = mapped_column(String(80), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     time: Mapped[str] = mapped_column(String(10), nullable=False)
-    attachment_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    attachment_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    attachment_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attachment_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    attachment_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    attachment_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+def _create_engine_with_fallback():
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    try:
+        with engine.connect() as conn:
+            conn.execute(select(1))
+        return engine
+    except OperationalError:
+        if _DATABASE_URL_FROM_ENV:
+            raise
+        print("[backend] MySQL is unavailable. Falling back to local SQLite database.")
+        fallback_engine = create_engine(SQLITE_FALLBACK_URL, pool_pre_ping=True)
+        with fallback_engine.connect() as conn:
+            conn.execute(select(1))
+        return fallback_engine
+
+
+engine = _create_engine_with_fallback()
 Base.metadata.create_all(engine)
 
 app = Flask(__name__)
@@ -96,8 +113,35 @@ def _seed_initial_data() -> None:
             [
                 MessageModel(server_id="general", channel_id="ogolny", author="Ola", text="Ej, kto ma plan na wieczór?", time="17:05"),
                 MessageModel(server_id="general", channel_id="ogolny", author="Bartek", text="Ja klasycznie: serial + kebs 😎", time="17:06"),
+                MessageModel(server_id="general", channel_id="ogolny", author="Natalia", text="Jak coś to po 19 jestem wolna", time="17:10"),
+                MessageModel(server_id="general", channel_id="ogolny", author="Kuba", text="to lecimy na boisko", time="17:11"),
+
+                MessageModel(server_id="general", channel_id="nauka", author="Ola", text="Czy tylko ja się uczę lepiej w nocy?", time="18:11"),
+                MessageModel(server_id="general", channel_id="nauka", author="Bartek", text="+1, po 22 mózg dopiero startuje", time="18:12"),
+                MessageModel(server_id="general", channel_id="nauka", author="Natalia", text="Pomodoro 25/5 u mnie działa", time="18:15"),
+
                 MessageModel(server_id="general", channel_id="offtopic", author="Kuba", text="Wrzucam mema dnia", time="19:21"),
+                MessageModel(server_id="general", channel_id="offtopic", author="Ola", text="to fake, takie rzeczy nie istnieją", time="19:22"),
+                MessageModel(server_id="general", channel_id="offtopic", author="Bartek", text="ten kanał to złoto", time="19:24"),
+
                 MessageModel(server_id="mobile-dev", channel_id="android", author="Natalia", text="Najskuteczniejszy fix ever", time="16:48"),
+                MessageModel(server_id="mobile-dev", channel_id="android", author="Bartek", text="emulator po cold boocie żyje", time="16:50"),
+                MessageModel(server_id="mobile-dev", channel_id="android", author="Ola", text="adb też dziś współpracuje", time="16:51"),
+
+                MessageModel(server_id="mobile-dev", channel_id="ios", author="Kuba", text="Ktoś faktycznie lubi Xcode?", time="15:30"),
+                MessageModel(server_id="mobile-dev", channel_id="ios", author="Ola", text="jak się nie crashuje to lubię", time="15:31"),
+
+                MessageModel(server_id="mobile-dev", channel_id="react-native", author="Natalia", text="RN hot reload to magia", time="14:12"),
+                MessageModel(server_id="mobile-dev", channel_id="react-native", author="Kuba", text="najlepsza część tego stacku", time="14:13"),
+
+                MessageModel(server_id="szkola", channel_id="projekt", author="Natalia", text="Kto widział moją bluzę?", time="13:40"),
+                MessageModel(server_id="szkola", channel_id="projekt", author="Ola", text="została chyba w sali obok", time="13:42"),
+
+                MessageModel(server_id="szkola", channel_id="terminy", author="Kuba", text="Jutro pierwsza lekcja odwołana?", time="11:02"),
+                MessageModel(server_id="szkola", channel_id="terminy", author="Natalia", text="update dam wieczorem", time="11:07"),
+
+                MessageModel(server_id="szkola", channel_id="pomoc", author="Ola", text="Jak usunąć plamę po kawie?", time="10:10"),
+                MessageModel(server_id="szkola", channel_id="pomoc", author="Bartek", text="chusteczki i delikatnie wodą", time="10:12"),
             ]
         )
         db.commit()

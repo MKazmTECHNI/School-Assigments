@@ -1,14 +1,18 @@
 package com.example.agreementcomms
 
+import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.example.agreementcomms.data.ApiAttachmentRequest
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.agreementcomms.data.ChatRepository
+import com.example.agreementcomms.data.SettingsStore
+import com.example.agreementcomms.data.UserSettings
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class ChatUiState(
@@ -21,7 +25,13 @@ data class ChatUiState(
     val section: MainSection = MainSection.Chat,
     val backendConnected: Boolean = false,
     val backendError: String? = null,
-    val composerAttachment: ComposerAttachment? = null
+    val composerAttachment: ComposerAttachment? = null,
+    val settingsDisplayName: String = "",
+    val settingsStatusText: String = "Online",
+    val settingsPushEnabled: Boolean = true,
+    val settingsVibrationEnabled: Boolean = true,
+    val settingsCompactModeEnabled: Boolean = false,
+    val settingsSavedAtLeastOnce: Boolean = false
 )
 
 data class ComposerAttachment(
@@ -33,8 +43,12 @@ data class ComposerAttachment(
 )
 
 class ChatViewModel(
+    application: Application
+) : AndroidViewModel(application) {
+
     private val repository: ChatRepository = ChatRepository()
-) : ViewModel() {
+
+    private val settingsStore = SettingsStore(application.applicationContext)
 
     var uiState by mutableStateOf(ChatUiState())
         private set
@@ -51,6 +65,25 @@ class ChatViewModel(
     )
 
     private var backendTried = false
+
+    init {
+        viewModelScope.launch {
+            val loaded = settingsStore.settingsFlow.first()
+            uiState = uiState.copy(
+                settingsDisplayName = loaded.displayName,
+                settingsStatusText = loaded.statusText,
+                settingsPushEnabled = loaded.pushEnabled,
+                settingsVibrationEnabled = loaded.vibrationEnabled,
+                settingsCompactModeEnabled = loaded.compactModeEnabled,
+                settingsSavedAtLeastOnce =
+                    loaded.displayName.isNotBlank() ||
+                        loaded.statusText != "Online" ||
+                        !loaded.pushEnabled ||
+                        !loaded.vibrationEnabled ||
+                        loaded.compactModeEnabled
+            )
+        }
+    }
 
     fun onDraftNicknameChange(value: String) {
         uiState = uiState.copy(draftNickname = value)
@@ -87,6 +120,41 @@ class ChatViewModel(
 
     fun setComposerAttachment(attachment: ComposerAttachment?) {
         uiState = uiState.copy(composerAttachment = attachment)
+    }
+
+    fun onSettingsDisplayNameChange(value: String) {
+        uiState = uiState.copy(settingsDisplayName = value)
+    }
+
+    fun onSettingsStatusTextChange(value: String) {
+        uiState = uiState.copy(settingsStatusText = value)
+    }
+
+    fun onSettingsPushEnabledChange(enabled: Boolean) {
+        uiState = uiState.copy(settingsPushEnabled = enabled)
+    }
+
+    fun onSettingsVibrationEnabledChange(enabled: Boolean) {
+        uiState = uiState.copy(settingsVibrationEnabled = enabled)
+    }
+
+    fun onSettingsCompactModeEnabledChange(enabled: Boolean) {
+        uiState = uiState.copy(settingsCompactModeEnabled = enabled)
+    }
+
+    fun saveSettings() {
+        viewModelScope.launch {
+            settingsStore.save(
+                UserSettings(
+                    displayName = uiState.settingsDisplayName,
+                    statusText = uiState.settingsStatusText,
+                    pushEnabled = uiState.settingsPushEnabled,
+                    vibrationEnabled = uiState.settingsVibrationEnabled,
+                    compactModeEnabled = uiState.settingsCompactModeEnabled
+                )
+            )
+            uiState = uiState.copy(settingsSavedAtLeastOnce = true)
+        }
     }
 
     fun sendMessage(

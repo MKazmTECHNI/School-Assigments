@@ -35,6 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +44,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,10 +65,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
@@ -195,6 +200,18 @@ fun AgreementApp() {
                 }
             },
             onClearComposerAttachment = { vm.setComposerAttachment(null) },
+            settingsDisplayName = state.settingsDisplayName,
+            settingsStatusText = state.settingsStatusText,
+            settingsPushEnabled = state.settingsPushEnabled,
+            settingsVibrationEnabled = state.settingsVibrationEnabled,
+            settingsCompactModeEnabled = state.settingsCompactModeEnabled,
+            settingsSavedAtLeastOnce = state.settingsSavedAtLeastOnce,
+            onSettingsDisplayNameChange = vm::onSettingsDisplayNameChange,
+            onSettingsStatusTextChange = vm::onSettingsStatusTextChange,
+            onSettingsPushEnabledChange = vm::onSettingsPushEnabledChange,
+            onSettingsVibrationEnabledChange = vm::onSettingsVibrationEnabledChange,
+            onSettingsCompactModeEnabledChange = vm::onSettingsCompactModeEnabledChange,
+            onSaveSettings = vm::saveSettings,
             messages = vm.activeMessages(),
             onSendMessage = { text ->
                 val attachment = state.composerAttachment
@@ -282,6 +299,18 @@ private fun MainScreen(
     onPickFile: () -> Unit,
     onTakePhoto: () -> Unit,
     onClearComposerAttachment: () -> Unit,
+    settingsDisplayName: String,
+    settingsStatusText: String,
+    settingsPushEnabled: Boolean,
+    settingsVibrationEnabled: Boolean,
+    settingsCompactModeEnabled: Boolean,
+    settingsSavedAtLeastOnce: Boolean,
+    onSettingsDisplayNameChange: (String) -> Unit,
+    onSettingsStatusTextChange: (String) -> Unit,
+    onSettingsPushEnabledChange: (Boolean) -> Unit,
+    onSettingsVibrationEnabledChange: (Boolean) -> Unit,
+    onSettingsCompactModeEnabledChange: (Boolean) -> Unit,
+    onSaveSettings: () -> Unit,
     messages: List<Message>,
     onSendMessage: (String) -> Unit
 ) {
@@ -340,12 +369,25 @@ private fun MainScreen(
                 onPickFile = onPickFile,
                 onTakePhoto = onTakePhoto,
                 onClearComposerAttachment = onClearComposerAttachment,
+                compactMode = settingsCompactModeEnabled,
                 onOpenSidebar = { scope.launch { drawerState.open() } }
             )
 
             MainSection.Settings -> SettingsScreen(
                 modifier = Modifier.fillMaxSize(),
                 nickname = nickname,
+                displayName = settingsDisplayName,
+                statusText = settingsStatusText,
+                pushEnabled = settingsPushEnabled,
+                vibrationEnabled = settingsVibrationEnabled,
+                compactModeEnabled = settingsCompactModeEnabled,
+                savedAtLeastOnce = settingsSavedAtLeastOnce,
+                onDisplayNameChange = onSettingsDisplayNameChange,
+                onStatusTextChange = onSettingsStatusTextChange,
+                onPushEnabledChange = onSettingsPushEnabledChange,
+                onVibrationEnabledChange = onSettingsVibrationEnabledChange,
+                onCompactModeEnabledChange = onSettingsCompactModeEnabledChange,
+                onSaveSettings = onSaveSettings,
                 onOpenSidebar = { scope.launch { drawerState.open() } }
             )
         }
@@ -377,7 +419,12 @@ private fun SidebarDrawer(
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onClose) {
-                Text("←")
+                Text(
+                    text = "←",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
             }
             Text(
                 text = "Accordance",
@@ -588,11 +635,13 @@ private fun ChatPane(
     onPickFile: () -> Unit,
     onTakePhoto: () -> Unit,
     onClearComposerAttachment: () -> Unit,
+    compactMode: Boolean,
     onOpenSidebar: () -> Unit
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var attachmentMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val visibleMessages = if (searchQuery.isBlank()) {
         messages
@@ -622,7 +671,12 @@ private fun ChatPane(
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onOpenSidebar) {
-                Text("←")
+                Text(
+                    text = "←",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -684,7 +738,7 @@ private fun ChatPane(
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(if (compactMode) 4.dp else 8.dp)
         ) {
             itemsIndexed(visibleMessages) { index, message ->
                 val groupedWithPrevious =
@@ -740,14 +794,41 @@ private fun ChatPane(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onPickFromGallery) {
-                Text("🖼")
-            }
-            IconButton(onClick = onTakePhoto) {
-                Text("📷")
-            }
-            IconButton(onClick = onPickFile) {
-                Text("📎")
+            Box {
+                IconButton(onClick = { attachmentMenuExpanded = !attachmentMenuExpanded }) {
+                    Text(
+                        text = "＋",
+                        color = Color.White,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+                DropdownMenu(
+                    expanded = attachmentMenuExpanded,
+                    onDismissRequest = { attachmentMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("🖼 Galeria") },
+                        onClick = {
+                            attachmentMenuExpanded = false
+                            onPickFromGallery()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("📷 Aparat") },
+                        onClick = {
+                            attachmentMenuExpanded = false
+                            onTakePhoto()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("📎 Plik") },
+                        onClick = {
+                            attachmentMenuExpanded = false
+                            onPickFile()
+                        }
+                    )
+                }
             }
             OutlinedTextField(
                 value = input,
@@ -910,6 +991,18 @@ private fun AvatarBubble(author: String) {
 private fun SettingsScreen(
     modifier: Modifier = Modifier,
     nickname: String,
+    displayName: String,
+    statusText: String,
+    pushEnabled: Boolean,
+    vibrationEnabled: Boolean,
+    compactModeEnabled: Boolean,
+    savedAtLeastOnce: Boolean,
+    onDisplayNameChange: (String) -> Unit,
+    onStatusTextChange: (String) -> Unit,
+    onPushEnabledChange: (Boolean) -> Unit,
+    onVibrationEnabledChange: (Boolean) -> Unit,
+    onCompactModeEnabledChange: (Boolean) -> Unit,
+    onSaveSettings: () -> Unit,
     onOpenSidebar: () -> Unit
 ) {
     Column(
@@ -922,17 +1015,23 @@ private fun SettingsScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onOpenSidebar) {
-                Text("←")
+                Text(
+                    text = "←",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
             }
             Text(
                 text = "Ustawienia",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = Color.White
             )
         }
 
         Text(
-            text = "Panel konta i projektu",
+            text = "Panel konta, powiadomień i czatu",
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
@@ -942,8 +1041,20 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(text = "Konto", fontWeight = FontWeight.SemiBold)
-                Text(text = "Zalogowany jako: $nickname")
-                Text(text = "Status: online")
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = onDisplayNameChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Nazwa wyświetlana") }
+                )
+                OutlinedTextField(
+                    value = statusText,
+                    onValueChange = onStatusTextChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Status") }
+                )
             }
         }
 
@@ -952,13 +1063,62 @@ private fun SettingsScreen(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(text = "Projekt", fontWeight = FontWeight.SemiBold)
-                Text(text = "Etap 1 gotowy ✅")
+                Text(text = "Powiadomienia", fontWeight = FontWeight.SemiBold)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "Push")
+                    Switch(checked = pushEnabled, onCheckedChange = onPushEnabledChange)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "Wibracje")
+                    Switch(checked = vibrationEnabled, onCheckedChange = onVibrationEnabledChange)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "Tryb kompaktowy czatu")
+                    Switch(checked = compactModeEnabled, onCheckedChange = onCompactModeEnabledChange)
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(text = "Podgląd", fontWeight = FontWeight.SemiBold)
+                Text(text = "Nick: ${displayName.ifBlank { nickname }}")
+                Text(text = "Status: ${statusText.ifBlank { "Brak" }}")
                 Text(
-                    text = "Następny krok: backend i prawdziwe pokoje.",
+                    text = "Push: ${if (pushEnabled) "włączone" else "wyłączone"} • Wibracje: ${if (vibrationEnabled) "włączone" else "wyłączone"}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        if (savedAtLeastOnce) {
+            Text(
+                text = "Ustawienia zapisane lokalnie",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Button(onClick = onSaveSettings, modifier = Modifier.fillMaxWidth()) {
+            Text(text = "Zapisz ustawienia (mock)")
         }
 
         TextButton(onClick = { }, modifier = Modifier.fillMaxWidth()) {
@@ -1011,7 +1171,10 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Ola", "Jak coś to jestem chętna po 19", "17:10", false),
             Message("Bartek", "To ja tylko buty ogarnę i lecimy", "17:11", false),
             Message("Natalia", "W końcu aktywnie, wow", "17:12", false),
-            Message("Kuba", "screen tego momentu 📸", "17:13", false)
+            Message("Kuba", "screen tego momentu 📸", "17:13", false),
+            Message("Ola", "to po 19:15 przy boisku?", "17:14", false),
+            Message("Bartek", "pasuje", "17:14", false),
+            Message("Natalia", "ja 10 min później, korki", "17:15", false)
         ),
         conversationKey("general", "#nauka") to mutableStateListOf(
             Message("Ola", "Czy tylko ja się uczę lepiej w nocy?", "18:11", false),
@@ -1019,7 +1182,10 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Natalia", "A rano ten sam mózg: nope", "18:13", false),
             Message("Kuba", "Rel", "18:13", false),
             Message("Ola", "Polecacie jakieś lofi playlisty?", "18:14", false),
-            Message("Bartek", "lofi girl i zero powiadomień", "18:15", false)
+            Message("Bartek", "lofi girl i zero powiadomień", "18:15", false),
+            Message("Natalia", "i technika pomodoro 25/5 serio działa", "18:16", false),
+            Message("Kuba", "ja robię 40/10 bo 25 to rozgrzewka", "18:17", false),
+            Message("Ola", "notuję, thanks", "18:18", false)
         ),
         conversationKey("general", "#offtopic") to mutableStateListOf(
             Message("Kuba", "wrzucam mema dnia", "19:21", false),
@@ -1057,7 +1223,10 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Bartek", "to ja po 3 kawie", "19:25", false),
             Message("Natalia", "i z deadline'em za 15 minut", "19:26", false),
             Message("Ola", "literally", "19:26", false),
-            Message("Kuba", "ok koniec spamu, pa 😅", "19:27", false)
+            Message("Kuba", "ok koniec spamu, pa 😅", "19:27", false),
+            Message("Bartek", "nie no jeszcze jeden i serio kończymy", "19:28", false),
+            Message("Natalia", "klasyk", "19:28", false),
+            Message("Ola", "ten kanał nigdy nie śpi", "19:29", false)
         ),
         conversationKey("mobile-dev", "#android") to mutableStateListOf(
             Message("Bartek", "Czy tylko mnie emulator czasem nienawidzi?", "16:45", false),
@@ -1066,17 +1235,26 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Kuba", "u mnie działa dopiero po restartcie laptopa", "16:49", false),
             Message("Bartek", "to już rytuał", "16:50", false),
             Message("Ola", "przynajmniej adb jeszcze żyje", "16:51", false),
-            Message("Natalia", "czasem…", "16:51", false)
+            Message("Natalia", "czasem…", "16:51", false),
+            Message("Kuba", "jak gradle cache pęknie to już tylko płacz", "16:52", false),
+            Message("Bartek", "i invalidate caches + restart studio", "16:53", false),
+            Message("Ola", "to powinno być oficjalne zaklęcie", "16:54", false)
         ),
         conversationKey("mobile-dev", "#ios") to mutableStateListOf(
             Message("Kuba", "Ktoś faktycznie lubi Xcode? pytam dla kolegi", "15:30", false),
             Message("Ola", "lubię… jak się nie crashuje", "15:31", false),
             Message("Bartek", "czyli 2 razy w miesiącu?", "15:33", false),
-            Message("Natalia", "💀", "15:33", false)
+            Message("Natalia", "💀", "15:33", false),
+            Message("Kuba", "simulator też dziś wolniejszy niż ja rano", "15:34", false),
+            Message("Ola", "to akurat normalne", "15:35", false),
+            Message("Bartek", "kawa dla ciebie i dla Maca", "15:35", false)
         ),
         conversationKey("mobile-dev", "#react-native") to mutableStateListOf(
             Message("Natalia", "RN hot reload to nadal magia", "14:12", false),
-            Message("Kuba", "true, to jest najlepsza część", "14:13", false)
+            Message("Kuba", "true, to jest najlepsza część", "14:13", false),
+            Message("Ola", "plus jeden codebase i mniej bólu", "14:14", false),
+            Message("Bartek", "dopóki native module nie powie stop", "14:15", false),
+            Message("Natalia", "facts", "14:15", false)
         ),
         conversationKey("szkola", "#projekt") to mutableStateListOf(
             Message("Natalia", "Kto widział moją czarną bluzę z kapturem?", "13:40", false),
@@ -1095,7 +1273,10 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
                         meta = "PDF • 1.2 MB"
                     )
                 )
-            )
+            ),
+            Message("Kuba", "znalazłem jeszcze powerbank, czyj?", "13:44", false),
+            Message("Bartek", "mój! oddam ci jutro batonika", "13:45", false),
+            Message("Natalia", "deal accepted", "13:45", false)
         ),
         conversationKey("szkola", "#terminy") to mutableStateListOf(
             Message("Kuba", "Jutro pierwsza lekcja odwołana czy plotka?", "11:02", false),
@@ -1106,7 +1287,10 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Natalia", "dam znać jak coś się pojawi", "11:07", false),
             Message("Bartek", "🙏", "11:07", false),
             Message("Ola", "dzięki", "11:08", false),
-            Message("Natalia", "update: jednak normalnie jest", "19:48", false)
+            Message("Natalia", "update: jednak normalnie jest", "19:48", false),
+            Message("Kuba", "czyli budzik na 6:30, super…", "19:49", false),
+            Message("Bartek", "trzymajcie się tam", "19:49", false),
+            Message("Ola", "weźcie termos, będzie zimno", "19:50", false)
         ),
         conversationKey("szkola", "#pomoc") to mutableStateListOf(
             Message("Ola", "Jak usunąć plamę po kawie z notatek?", "10:10", false),
@@ -1114,7 +1298,10 @@ fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
             Message("Natalia", "Kuba pls", "10:11", false),
             Message("Bartek", "chusteczki + delikatnie wodą, tylko nie trzeć mocno", "10:12", false),
             Message("Ola", "ok, testuję", "10:13", false),
-            Message("Ola", "działa, dzięki!", "10:16", false)
+            Message("Ola", "działa, dzięki!", "10:16", false),
+            Message("Kuba", "ej no ryż też działa na wszystko", "10:17", false),
+            Message("Natalia", "tylko nie na ten argument", "10:17", false),
+            Message("Bartek", "przynajmniej morale podniósł", "10:18", false)
         )
     )
 }

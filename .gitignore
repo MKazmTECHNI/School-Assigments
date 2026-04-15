@@ -24,6 +24,10 @@ backend/.mypy_cache/
 backend/.ruff_cache/
 backend/.coverage
 backend/*.log
+backend/*.db
 backend/.env
 backend/.env.*
 !backend/.env.example
+
+# VS Code local workspace settings
+.vscode/

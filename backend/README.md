@@ -3,6 +3,7 @@
 Minimal backend API for servers, channels and messages.
 
 Data persistence:
+
 - MySQL (messages/servers/channels)
 - Local file system (`uploads/`) for images/files
 
