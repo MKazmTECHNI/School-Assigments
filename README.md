@@ -8,6 +8,7 @@ Pomysł: lekka kopia komunikatora w stylu Discord. (Discord = Niezgoda, Accordan
 - **Android (Kotlin)**
 - **Jetpack Compose (Material 3)**
 - Gradle Kotlin DSL
+- **Backend: Python FastAPI** (folder `backend/`)
 
 ## Skład zespołu
 
@@ -53,6 +54,17 @@ To oznacza: obecnie dane nie są pobierane z API i nie są trwałe po restarcie 
 - `data/` – repository + remote source (API) + local cache (Room)
 - `ViewModel` + `UiState` + eventy UI
 - Docelowo serwery/kanały/wiadomości będą pobierane z backendu
+
+## Backend (wstępnie dodany)
+
+Dodano prosty serwer API w folderze `backend/`:
+
+- `GET /servers`
+- `GET /servers/{server_id}/channels`
+- `GET /servers/{server_id}/channels/{channel_id}/messages`
+- `POST /servers/{server_id}/channels/{channel_id}/messages`
+
+To pozwala stopniowo przechodzić z mocków lokalnych na realny fetch.
 
 ## Plan dalszych prac (do 10 maja)
 
