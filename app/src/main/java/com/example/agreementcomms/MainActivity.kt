@@ -50,13 +50,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.agreementcomms.data.ChatRepository
 import com.example.agreementcomms.ui.theme.AgreementCommsTheme
 import kotlinx.coroutines.launch
 
@@ -74,120 +74,30 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AgreementApp() {
-    var isLoggedIn by rememberSaveable { mutableStateOf(false) }
-    var nickname by rememberSaveable { mutableStateOf("") }
-    val appScope = rememberCoroutineScope()
-    val repository = remember { ChatRepository() }
+    val vm: ChatViewModel = viewModel()
+    val state = vm.uiState
 
-    var servers by remember { mutableStateOf(defaultServers()) }
-
-    var selectedServerId by rememberSaveable { mutableStateOf(servers.first().id) }
-    var selectedChannel by rememberSaveable { mutableStateOf(servers.first().channels.first()) }
-    var section by rememberSaveable { mutableStateOf(MainSection.Chat) }
-
-    val conversations = remember {
-        mutableStateMapOf<String, SnapshotStateList<Message>>().apply {
-            putAll(buildSampleConversations())
-        }
-    }
-    val channelApiIds = remember { mutableStateMapOf<String, String>() }
-    var backendConnected by rememberSaveable { mutableStateOf(false) }
-    var backendError by rememberSaveable { mutableStateOf<String?>(null) }
-    var backendTried by rememberSaveable { mutableStateOf(false) }
-    val unreadCounts = remember {
-        mutableStateMapOf(
-            conversationKey("general", "#offtopic") to 3,
-            conversationKey("mobile-dev", "#android") to 2,
-            conversationKey("szkola", "#terminy") to 1
-        )
-    }
-
-    if (!isLoggedIn) {
+    if (!state.isLoggedIn) {
         LoginScreen(
-            nickname = nickname,
-            onNicknameChange = { nickname = it },
-            onEnter = { if (nickname.isNotBlank()) isLoggedIn = true }
+            nickname = state.draftNickname,
+            onNicknameChange = vm::onDraftNicknameChange,
+            onEnter = vm::login
         )
     } else {
-        LaunchedEffect(isLoggedIn) {
-            if (isLoggedIn && !backendTried) {
-                backendTried = true
-                try {
-                    val payload = repository.fetchBackendBootstrap(nickname)
-                    if (payload.servers.isNotEmpty()) {
-                        servers = payload.servers
-                        conversations.clear()
-                        conversations.putAll(payload.conversations)
-                        channelApiIds.clear()
-                        channelApiIds.putAll(payload.channelApiIds)
-                        selectedServerId = payload.servers.first().id
-                        selectedChannel = payload.servers.first().channels.firstOrNull().orEmpty()
-                        backendConnected = true
-                        backendError = null
-                    }
-                } catch (ex: Exception) {
-                    backendConnected = false
-                    backendError = ex.message ?: "Nie udało się połączyć z backendem"
-                }
-            }
-        }
-
-        val activeConversationKey = conversationKey(selectedServerId, selectedChannel)
-        val activeMessages = conversations.getOrPut(activeConversationKey) { mutableStateListOf() }
-
         MainScreen(
-            nickname = nickname,
-            servers = servers,
-            section = section,
-            onSectionChange = { section = it },
-            selectedServerId = selectedServerId,
-            onServerSelected = { serverId ->
-                selectedServerId = serverId
-                val firstChannel = servers.first { it.id == serverId }.channels.first()
-                selectedChannel = firstChannel
-                unreadCounts[conversationKey(serverId, firstChannel)] = 0
-            },
-            selectedChannel = selectedChannel,
-            onChannelSelected = {
-                selectedChannel = it
-                unreadCounts[conversationKey(selectedServerId, it)] = 0
-            },
-            unreadCounts = unreadCounts,
-            backendConnected = backendConnected,
-            backendError = backendError,
-            messages = activeMessages,
-            onSendMessage = { messageText ->
-                val conversationKey = conversationKey(selectedServerId, selectedChannel)
-                conversations
-                    .getOrPut(conversationKey) { mutableStateListOf() }
-                    .add(
-                    Message(
-                        author = nickname,
-                        text = messageText,
-                        time = "teraz",
-                        isMine = true
-                    )
-                )
-
-                val apiChannelId = channelApiIds[conversationKey]
-                if (apiChannelId != null) {
-                    appScope.launch {
-                        try {
-                            repository.sendMessage(
-                                serverId = selectedServerId,
-                                channelId = apiChannelId,
-                                author = nickname,
-                                text = messageText
-                            )
-                            backendConnected = true
-                            backendError = null
-                        } catch (ex: Exception) {
-                            backendConnected = false
-                            backendError = ex.message ?: "Wysłanie do backendu nie powiodło się"
-                        }
-                    }
-                }
-            }
+            nickname = state.nickname,
+            servers = state.servers,
+            section = state.section,
+            onSectionChange = vm::setSection,
+            selectedServerId = state.selectedServerId,
+            onServerSelected = vm::onServerSelected,
+            selectedChannel = state.selectedChannel,
+            onChannelSelected = vm::onChannelSelected,
+            unreadCounts = vm.unreadCounts,
+            backendConnected = state.backendConnected,
+            backendError = state.backendError,
+            messages = vm.activeMessages(),
+            onSendMessage = vm::sendMessage
         )
     }
 }
@@ -834,14 +744,14 @@ data class Message(
     val isMine: Boolean
 )
 
-private enum class MainSection {
+enum class MainSection {
     Chat,
     Settings
 }
 
 fun conversationKey(serverId: String, channel: String): String = "$serverId|$channel"
 
-private fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
+fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Message>> {
     return mutableMapOf(
         conversationKey("general", "#ogólny") to mutableStateListOf(
             Message("Ola", "Ej, kto ma plan na wieczór?", "17:05", false),
@@ -923,7 +833,7 @@ private fun buildSampleConversations(): MutableMap<String, SnapshotStateList<Mes
     )
 }
 
-private fun defaultServers(): List<Server> {
+fun defaultServers(): List<Server> {
     return listOf(
         Server(
             id = "general",

@@ -8,7 +8,7 @@ Pomysł: lekka kopia komunikatora w stylu Discord. (Discord = Niezgoda, Accordan
 - **Android (Kotlin)**
 - **Jetpack Compose (Material 3)**
 - Gradle Kotlin DSL
-- **Backend: Python FastAPI** (folder `backend/`)
+- **Backend: Python Flask** (folder `backend/`)
 
 ## Skład zespołu
 
@@ -41,11 +41,11 @@ W aplikacji zaimplementowano:
 ## Architektura (stan aktualny)
 
 - UI: Jetpack Compose (single-activity)
-- Stan: local state w Compose (`remember`, `rememberSaveable`)
-- Dane: mock in-memory (hardcoded serwery/kanały/wiadomości)
+- Stan: `ViewModel` + Compose state
+- Dane: `Repository` + backend API + fallback mock in-memory
 - Routing widoków: sekcje `Chat` / `Settings`
 
-To oznacza: obecnie dane nie są pobierane z API i nie są trwałe po restarcie aplikacji.
+To oznacza: aplikacja pobiera dane z API, ale nadal nie ma trwałości lokalnej (po restarcie brak cache).
 
 ## Architektura docelowa (kolejny etap)
 
@@ -68,8 +68,8 @@ To pozwala stopniowo przechodzić z mocków lokalnych na realny fetch.
 
 ## Plan dalszych prac (do 10 maja)
 
-- [ ] Refactor do `ViewModel + Repository`
-- [ ] Integracja backendu (serwery, kanały, wiadomości)
+- [x] Refactor do `ViewModel + Repository`
+- [x] Integracja backendu (serwery, kanały, wiadomości)
 - [ ] Trwałość lokalna (Room) + cache
 - [ ] Reakcje, piny, edycja/usuwanie wiadomości
 - [ ] Uwierzytelnianie i profile użytkowników
