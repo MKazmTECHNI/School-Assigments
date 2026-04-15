@@ -8,7 +8,7 @@ Pomysł: lekka kopia komunikatora w stylu Discord. (Discord = Niezgoda, Accordan
 - **Android (Kotlin)**
 - **Jetpack Compose (Material 3)**
 - Gradle Kotlin DSL
-- **Backend: Python Flask** (folder `backend/`)
+- **Backend: Python Flask + MySQL** (folder `backend/`)
 
 ## Skład zespołu
 
@@ -43,6 +43,7 @@ W aplikacji zaimplementowano:
 - UI: Jetpack Compose (single-activity)
 - Stan: `ViewModel` + Compose state
 - Dane: `Repository` + backend API + fallback mock in-memory
+- Backend persistence: MySQL + file system uploads
 - Routing widoków: sekcje `Chat` / `Settings`
 
 To oznacza: aplikacja pobiera dane z API, ale nadal nie ma trwałości lokalnej (po restarcie brak cache).
