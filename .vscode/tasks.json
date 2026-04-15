@@ -36,6 +36,18 @@
 			"type": "shell",
 			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rebase --abort 2>$null; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" checkout RN-Accordance; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" remote set-url origin https://github.com/MKazmTECHNI/School-Assigments.git; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" add -A; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" commit -m \"chore: checkpoint local changes on RN-Accordance\"; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1",
 			"group": "build"
+		},
+		{
+			"label": "git-commit-pending",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" commit -m chore_checkpoint_local_changes_RN_Accordance; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" log -1 --pretty=format:\"%H%n%s\"",
+			"group": "build"
+		},
+		{
+			"label": "git-final-push-once",
+			"type": "shell",
+			"command": "git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rebase --abort 2>$null; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" checkout RN-Accordance; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" remote set-url origin https://github.com/MKazmTECHNI/School-Assigments.git; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" add -A; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" commit -m chore_checkpoint_before_push; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" push -u origin RN-Accordance; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" push --force-with-lease -u origin RN-Accordance; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" status -b --porcelain=v1; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" rev-parse --abbrev-ref HEAD; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" log -1 --pretty=format:\"%H%n%s\"; git -C \"C:/Users/eritn/AndroidStudioProjects/AgreementComms\" remote get-url origin",
+			"group": "build"
 		}
 	]
 }
