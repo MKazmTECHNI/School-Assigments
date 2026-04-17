@@ -1,0 +1,133 @@
+QWidget#MainWindow {
+  background: #242424;
+}
+
+QWidget {
+  color: #d4d4d4;
+  font-family: Tahoma;
+  font-size: 8px;
+}
+
+QFrame#DisplayPanel {
+  background: #131313;
+  border: 1px solid #5f5f5f;
+}
+QFrame#BottomPanel {
+  background: #131313;
+  border: 1px solid #5f5f5f;
+  height: auto;
+}
+
+QLabel#TimeDisplay {
+  background: #031703;
+  border: 1px inset #5e5e5e;
+  color: #00ff6e;
+  font-family: Consolas;
+  font-weight: bold;
+  font-size: 16px;
+  padding: 0px 5px;
+  min-width: 68px;
+}
+
+QLabel#MetaValue {
+  background: #031703;
+  border: 1px inset #5e5e5e;
+  color: #74ff8d;
+  padding: 0px 4px;
+  min-height: 12px;
+}
+
+QLabel#MetaCaption {
+  color: #d4d4d4;
+  font-size: 8px;
+  font-weight: bold;
+}
+
+QLabel#MetaUnit {
+  color: #d4d4d4;
+  font-size: 8px;
+  font-weight: bold;
+}
+
+QLabel#StereoOn {
+  color: #00ff6e;
+  font-size: 8px;
+  font-weight: bold;
+}
+
+QPushButton#ControlButton {
+  background: #bdbdbd;
+  color: #3f3f3f;
+  border-top: 2px solid #f0f0f0;
+  border-left: 2px solid #f0f0f0;
+  border-right: 2px solid #5f5f5f;
+  border-bottom: 2px solid #5f5f5f;
+  padding: 0px 1px;
+  /* min-width: 19px;
+  max-width: 19px;
+  min-height: 14px;
+  max-height: 14px; */
+  width: 19px;
+  height: 19px;
+  font-size: 14px;
+}
+
+QPushButton#ControlButton:pressed {
+  border-top: 1px solid #5f5f5f;
+  border-left: 1px solid #5f5f5f;
+  border-right: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+QPushButton#ToggleButton {
+  background: #bdbdbd;
+  color: #3f3f3f;
+  border-top: 2px solid #f0f0f0;
+  border-left: 2px solid #f0f0f0;
+  border-right: 2px solid #5f5f5f;
+  border-bottom: 2px solid #5f5f5f;
+  min-width: 47px;
+  min-height: 14px;
+  font-weight: bold;
+  font-size: 8px;
+}
+
+QPushButton#ToggleButton:pressed {
+  border-top: 1px solid #5f5f5f;
+  border-left: 1px solid #5f5f5f;
+  border-right: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+QPushButton#ToggleButton:checked {
+  background: #6bcf72;
+  color: #111;
+  border-top: 1px solid #5f5f5f;
+  border-left: 1px solid #5f5f5f;
+  border-right: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+QSlider::groove:horizontal {
+  border: 1px solid #6a6a6a;
+  height: 6px;
+  background: #0b0b0b;
+}
+
+QSlider::sub-page:horizontal {
+  background: #065b19;
+}
+
+QSlider::add-page:horizontal {
+  background: #681010;
+}
+
+QSlider::handle:horizontal {
+  background: #d1d1d1;
+  border-top: 1px solid #f0f0f0;
+  border-left: 1px solid #f0f0f0;
+  border-right: 1px solid #666666;
+  border-bottom: 1px solid #666666;
+  width: 10px;
+  margin: -4px 0;
+}
