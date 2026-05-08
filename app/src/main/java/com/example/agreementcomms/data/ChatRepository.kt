@@ -5,6 +5,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.example.agreementcomms.AttachmentType
 import com.example.agreementcomms.Message
 import com.example.agreementcomms.MessageAttachment
+import com.example.agreementcomms.Role
 import com.example.agreementcomms.Server
 import com.example.agreementcomms.conversationKey
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -102,6 +103,119 @@ class ChatRepository {
         val requestBody = content.toRequestBody(mimeType.toMediaTypeOrNull())
         val part = MultipartBody.Part.createFormData("file", fileName, requestBody)
         return AccordanceApiClient.api.uploadFile(part)
+    }
+
+    suspend fun createServer(name: String, icon: String? = null): Server {
+        val created = AccordanceApiClient.api.createServer(
+            CreateServerRequest(name = name, icon = icon)
+        )
+        return Server(
+            id = created.id,
+            name = created.name,
+            icon = created.icon,
+            channels = emptyList()
+        )
+    }
+
+    suspend fun updateServer(
+        serverId: String,
+        name: String? = null,
+        icon: String? = null
+    ): Server {
+        val updated = AccordanceApiClient.api.updateServer(
+            serverId = serverId,
+            request = UpdateServerRequest(name = name, icon = icon)
+        )
+        return Server(
+            id = updated.id,
+            name = updated.name,
+            icon = updated.icon,
+            channels = emptyList()
+        )
+    }
+
+    suspend fun deleteServer(serverId: String) {
+        AccordanceApiClient.api.deleteServer(serverId)
+    }
+
+    suspend fun createChannel(serverId: String, name: String): ApiChannel {
+        return AccordanceApiClient.api.createChannel(
+            serverId = serverId,
+            request = CreateChannelRequest(name = name)
+        )
+    }
+
+    suspend fun updateChannel(serverId: String, channelId: String, name: String): ApiChannel {
+        return AccordanceApiClient.api.updateChannel(
+            serverId = serverId,
+            channelId = channelId,
+            request = UpdateChannelRequest(name = name)
+        )
+    }
+
+    suspend fun deleteChannel(serverId: String, channelId: String) {
+        AccordanceApiClient.api.deleteChannel(serverId, channelId)
+    }
+
+    suspend fun getRoles(serverId: String): List<Role> {
+        return AccordanceApiClient.api.getRoles(serverId).map {
+            Role(
+                id = it.id,
+                name = it.name,
+                color = it.color,
+                position = it.position
+            )
+        }
+    }
+
+    suspend fun createRole(
+        serverId: String,
+        name: String,
+        color: String? = null,
+        position: Int = 0
+    ): Role {
+        val created = AccordanceApiClient.api.createRole(
+            serverId = serverId,
+            request = CreateRoleRequest(
+                name = name,
+                color = color,
+                position = position
+            )
+        )
+        return Role(
+            id = created.id,
+            name = created.name,
+            color = created.color,
+            position = created.position
+        )
+    }
+
+    suspend fun updateRole(
+        serverId: String,
+        roleId: String,
+        name: String? = null,
+        color: String? = null,
+        position: Int? = null
+    ): Role {
+        val updated = AccordanceApiClient.api.updateRole(
+            serverId = serverId,
+            roleId = roleId,
+            request = UpdateRoleRequest(
+                name = name,
+                color = color,
+                position = position
+            )
+        )
+        return Role(
+            id = updated.id,
+            name = updated.name,
+            color = updated.color,
+            position = updated.position
+        )
+    }
+
+    suspend fun deleteRole(serverId: String, roleId: String) {
+        AccordanceApiClient.api.deleteRole(serverId, roleId)
     }
 
     private fun toAbsoluteUrl(url: String): String {
