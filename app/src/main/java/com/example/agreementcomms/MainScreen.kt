@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,17 +16,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,10 +74,26 @@ fun MainScreen(
     onSettingsVibrationEnabledChange: (Boolean) -> Unit,
     onSettingsCompactModeEnabledChange: (Boolean) -> Unit,
     onSaveSettings: () -> Unit,
+    roles: List<Role>,
+    onCreateServer: (String, String) -> Unit,
+    onUpdateSelectedServer: (String, String) -> Unit,
+    onDeleteSelectedServer: () -> Unit,
+    onCreateChannel: (String) -> Unit,
+    onRenameSelectedChannel: (String) -> Unit,
+    onDeleteSelectedChannel: () -> Unit,
+    onCreateRole: (String, String?, Int, RolePermissions) -> Unit,
+    onUpdateRole: (String, String, String?, Int?, RolePermissions?) -> Unit,
+    onDeleteRole: (String) -> Unit,
+    activeRoleId: String,
+    onSelectActiveRole: (String) -> Unit,
+    canManageServer: Boolean,
+    canManageChannels: Boolean,
+    canManageRoles: Boolean,
+    canManageMessages: Boolean,
     messages: List<Message>,
     onSendMessage: (String) -> Unit
 ) {
-    val selectedServer = servers.firstOrNull { it.id == selectedServerId } ?: servers.first()
+    val selectedServer = servers.firstOrNull { it.id == selectedServerId } ?: servers.firstOrNull()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -83,29 +107,38 @@ fun MainScreen(
                     .width(340.dp),
                 drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow
             ) {
-                SidebarDrawer(
-                    section = section,
-                    onSectionChange = {
-                        onSectionChange(it)
-                        scope.launch { drawerState.close() }
-                    },
-                    servers = servers,
-                    selectedServerId = selectedServerId,
-                    onServerSelected = {
-                        onServerSelected(it)
-                        onSectionChange(MainSection.Chat)
-                        scope.launch { drawerState.close() }
-                    },
-                    selectedServer = selectedServer,
-                    selectedChannel = selectedChannel,
-                    onChannelSelected = {
-                        onChannelSelected(it)
-                        onSectionChange(MainSection.Chat)
-                        scope.launch { drawerState.close() }
-                    },
-                    unreadCounts = unreadCounts,
-                    onClose = { scope.launch { drawerState.close() } }
-                )
+                if (selectedServer != null) {
+                    SidebarDrawer(
+                        section = section,
+                        onSectionChange = {
+                            onSectionChange(it)
+                            scope.launch { drawerState.close() }
+                        },
+                        servers = servers,
+                        selectedServerId = selectedServerId,
+                        onServerSelected = {
+                            onServerSelected(it)
+                            onSectionChange(MainSection.Chat)
+                            scope.launch { drawerState.close() }
+                        },
+                        selectedServer = selectedServer,
+                        selectedChannel = selectedChannel,
+                        onChannelSelected = {
+                            onChannelSelected(it)
+                            onSectionChange(MainSection.Chat)
+                            scope.launch { drawerState.close() }
+                        },
+                        onCreateServer = onCreateServer,
+                        unreadCounts = unreadCounts,
+                        onClose = { scope.launch { drawerState.close() } }
+                    )
+                } else {
+                    Text(
+                        text = "Brak serwerów",
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
     ) {
@@ -113,7 +146,7 @@ fun MainScreen(
             MainSection.Chat -> ChatPane(
                 modifier = Modifier.fillMaxSize(),
                 nickname = nickname,
-                serverName = selectedServer.name,
+                serverName = selectedServer?.name ?: "Brak serwera",
                 selectedChannel = selectedChannel,
                 messages = messages,
                 onSendMessage = onSendMessage,
@@ -143,6 +176,27 @@ fun MainScreen(
                 onVibrationEnabledChange = onSettingsVibrationEnabledChange,
                 onCompactModeEnabledChange = onSettingsCompactModeEnabledChange,
                 onSaveSettings = onSaveSettings,
+                servers = servers,
+                selectedServerId = selectedServerId,
+                selectedChannel = selectedChannel,
+                onServerSelected = onServerSelected,
+                onChannelSelected = onChannelSelected,
+                roles = roles,
+                onCreateServer = onCreateServer,
+                onUpdateSelectedServer = onUpdateSelectedServer,
+                onDeleteSelectedServer = onDeleteSelectedServer,
+                onCreateChannel = onCreateChannel,
+                onRenameSelectedChannel = onRenameSelectedChannel,
+                onDeleteSelectedChannel = onDeleteSelectedChannel,
+                onCreateRole = onCreateRole,
+                onUpdateRole = onUpdateRole,
+                onDeleteRole = onDeleteRole,
+                activeRoleId = activeRoleId,
+                onSelectActiveRole = onSelectActiveRole,
+                canManageServer = canManageServer,
+                canManageChannels = canManageChannels,
+                canManageRoles = canManageRoles,
+                canManageMessages = canManageMessages,
                 onOpenSidebar = { scope.launch { drawerState.open() } }
             )
         }
@@ -159,6 +213,7 @@ private fun SidebarDrawer(
     selectedServer: Server,
     selectedChannel: String,
     onChannelSelected: (String) -> Unit,
+    onCreateServer: (String, String) -> Unit,
     unreadCounts: Map<String, Int>,
     onClose: () -> Unit
 ) {
@@ -197,7 +252,8 @@ private fun SidebarDrawer(
                     .width(74.dp),
                 servers = servers,
                 selectedServerId = selectedServerId,
-                onServerSelected = onServerSelected
+                onServerSelected = onServerSelected,
+                onCreateServer = onCreateServer
             )
             ChannelSidebar(
                 modifier = Modifier
@@ -262,8 +318,13 @@ private fun ServerRail(
     modifier: Modifier = Modifier,
     servers: List<Server>,
     selectedServerId: String,
-    onServerSelected: (String) -> Unit
+    onServerSelected: (String) -> Unit,
+    onCreateServer: (String, String) -> Unit
 ) {
+    var showCreateServerDialog by rememberSaveable { mutableStateOf(false) }
+    var serverNameInput by rememberSaveable { mutableStateOf("") }
+    var serverIconInput by rememberSaveable { mutableStateOf("") }
+
     Column(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceContainerLowest)
@@ -300,6 +361,70 @@ private fun ServerRail(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.size(4.dp))
+        Surface(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable { showCreateServerDialog = true },
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = CircleShape
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "+",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+
+    if (showCreateServerDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateServerDialog = false },
+            title = { Text("Nowy serwer") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = serverNameInput,
+                        onValueChange = { serverNameInput = it },
+                        label = { Text("Nazwa serwera") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = serverIconInput,
+                        onValueChange = { serverIconInput = it },
+                        label = { Text("Ikona (1 znak)") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onCreateServer(serverNameInput, serverIconInput.take(1))
+                        serverNameInput = ""
+                        serverIconInput = ""
+                        showCreateServerDialog = false
+                    },
+                    enabled = serverNameInput.isNotBlank()
+                ) {
+                    Text("Utwórz")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateServerDialog = false }) {
+                    Text("Anuluj")
+                }
+            }
+        )
     }
 }
 

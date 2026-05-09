@@ -7,7 +7,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine, delete, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, delete, func, inspect, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 from werkzeug.utils import secure_filename
@@ -60,6 +60,10 @@ class RoleModel(Base):
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manage_server: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    manage_channels: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    manage_roles: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    manage_messages: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     server: Mapped[ServerModel] = relationship(back_populates="roles")
 
@@ -97,6 +101,24 @@ def _create_engine_with_fallback():
 
 engine = _create_engine_with_fallback()
 Base.metadata.create_all(engine)
+
+
+def _ensure_role_permission_columns() -> None:
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        existing_columns = {col["name"] for col in inspector.get_columns("roles")}
+        missing_columns = [
+            ("manage_server", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("manage_channels", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("manage_roles", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("manage_messages", "BOOLEAN NOT NULL DEFAULT 0"),
+        ]
+        for column_name, column_type in missing_columns:
+            if column_name not in existing_columns:
+                conn.execute(text(f"ALTER TABLE roles ADD COLUMN {column_name} {column_type}"))
+
+
+_ensure_role_permission_columns()
 
 app = Flask(__name__)
 CORS(app)
@@ -147,6 +169,56 @@ def _role_exists(db: Session, server_id: str, role_id: str) -> bool:
         )
         is not None
     )
+
+
+PERM_MANAGE_SERVER = "manage_server"
+PERM_MANAGE_CHANNELS = "manage_channels"
+PERM_MANAGE_ROLES = "manage_roles"
+PERM_MANAGE_MESSAGES = "manage_messages"
+
+
+def _parse_permissions(payload_permissions: Optional[dict]) -> dict[str, bool]:
+    payload_permissions = payload_permissions or {}
+    return {
+        PERM_MANAGE_SERVER: bool(payload_permissions.get("manageServer", False)),
+        PERM_MANAGE_CHANNELS: bool(payload_permissions.get("manageChannels", False)),
+        PERM_MANAGE_ROLES: bool(payload_permissions.get("manageRoles", False)),
+        PERM_MANAGE_MESSAGES: bool(payload_permissions.get("manageMessages", False)),
+    }
+
+
+def _role_permissions_response(role: RoleModel) -> dict[str, bool]:
+    return {
+        "manageServer": bool(role.manage_server),
+        "manageChannels": bool(role.manage_channels),
+        "manageRoles": bool(role.manage_roles),
+        "manageMessages": bool(role.manage_messages),
+    }
+
+
+def _resolve_actor_role(db: Session, server_id: str, actor_role_id: Optional[str]) -> Optional[RoleModel]:
+    if not actor_role_id:
+        return None
+    return db.scalar(
+        select(RoleModel).where(
+            RoleModel.server_id == server_id,
+            RoleModel.id == actor_role_id,
+        )
+    )
+
+
+def _require_permission_or_403(
+    db: Session,
+    server_id: str,
+    permission: str,
+    actor_role_id: Optional[str],
+):
+    actor_role = _resolve_actor_role(db, server_id, actor_role_id)
+    if actor_role is None:
+        return None
+    if bool(getattr(actor_role, permission, False)):
+        return None
+    return jsonify({"detail": "Permission denied"}), 403
 
 
 def _seed_initial_data() -> None:
@@ -211,6 +283,18 @@ def _seed_initial_data() -> None:
                 .where(RoleModel.server_id == server_id)
             )
             if has_roles and has_roles > 0:
+                existing_roles = db.scalars(
+                    select(RoleModel).where(RoleModel.server_id == server_id)
+                ).all()
+                for role in existing_roles:
+                    lower_name = role.name.strip().lower()
+                    if lower_name == "owner":
+                        role.manage_server = True
+                        role.manage_channels = True
+                        role.manage_roles = True
+                        role.manage_messages = True
+                    elif lower_name == "member":
+                        role.manage_messages = True
                 continue
             db.add_all(
                 [
@@ -220,6 +304,10 @@ def _seed_initial_data() -> None:
                         name="Owner",
                         color="#f59e0b",
                         position=100,
+                        manage_server=True,
+                        manage_channels=True,
+                        manage_roles=True,
+                        manage_messages=True,
                     ),
                     RoleModel(
                         id=_next_unique_id(db, RoleModel, f"{server_id}-member"),
@@ -227,6 +315,10 @@ def _seed_initial_data() -> None:
                         name="Member",
                         color="#60a5fa",
                         position=10,
+                        manage_server=False,
+                        manage_channels=False,
+                        manage_roles=False,
+                        manage_messages=True,
                     ),
                 ]
             )
@@ -273,6 +365,29 @@ def create_server():
         server_id = _next_unique_id(db, ServerModel, _truncate(base_id, 50))
         row = ServerModel(id=server_id, name=_truncate(name, 100), icon=icon)
         db.add(row)
+        db.add_all(
+            [
+                RoleModel(
+                    id=_next_unique_id(db, RoleModel, f"{server_id}-owner"),
+                    server_id=server_id,
+                    name="Owner",
+                    color="#f59e0b",
+                    position=100,
+                    manage_server=True,
+                    manage_channels=True,
+                    manage_roles=True,
+                    manage_messages=True,
+                ),
+                RoleModel(
+                    id=_next_unique_id(db, RoleModel, f"{server_id}-member"),
+                    server_id=server_id,
+                    name="Member",
+                    color="#60a5fa",
+                    position=10,
+                    manage_messages=True,
+                ),
+            ]
+        )
         db.commit()
         return jsonify({"id": row.id, "name": row.name, "icon": row.icon}), 201
 
@@ -282,11 +397,15 @@ def update_server(server_id: str):
     payload = request.get_json(silent=True) or {}
     name = payload.get("name")
     icon = payload.get("icon")
+    actor_role_id = request.args.get("actor_role_id")
 
     with Session(engine) as db:
         row = db.get(ServerModel, server_id)
         if row is None:
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_SERVER, actor_role_id)
+        if denied is not None:
+            return denied
 
         if name is not None:
             name_value = str(name).strip()
@@ -306,10 +425,14 @@ def update_server(server_id: str):
 
 @app.delete("/servers/<server_id>")
 def delete_server(server_id: str):
+    actor_role_id = request.args.get("actor_role_id")
     with Session(engine) as db:
         row = db.get(ServerModel, server_id)
         if row is None:
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_SERVER, actor_role_id)
+        if denied is not None:
+            return denied
 
         db.execute(delete(MessageModel).where(MessageModel.server_id == server_id))
         db.delete(row)
@@ -335,6 +458,7 @@ def create_channel(server_id: str):
     payload = request.get_json(silent=True) or {}
     name = str(payload.get("name", "")).strip()
     requested_id = str(payload.get("id", "")).strip()
+    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
 
     if not name:
         return jsonify({"detail": "name is required"}), 400
@@ -342,6 +466,9 @@ def create_channel(server_id: str):
     with Session(engine) as db:
         if not _server_exists(db, server_id):
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_CHANNELS, actor_role_id)
+        if denied is not None:
+            return denied
 
         base_name = name[1:] if name.startswith("#") else name
         base_id = requested_id or _slugify(base_name)
@@ -360,12 +487,16 @@ def create_channel(server_id: str):
 def update_channel(server_id: str, channel_id: str):
     payload = request.get_json(silent=True) or {}
     name = str(payload.get("name", "")).strip()
+    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
     if not name:
         return jsonify({"detail": "name is required"}), 400
 
     with Session(engine) as db:
         if not _server_exists(db, server_id):
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_CHANNELS, actor_role_id)
+        if denied is not None:
+            return denied
         row = db.scalar(
             select(ChannelModel).where(
                 ChannelModel.server_id == server_id,
@@ -382,9 +513,13 @@ def update_channel(server_id: str, channel_id: str):
 
 @app.delete("/servers/<server_id>/channels/<channel_id>")
 def delete_channel(server_id: str, channel_id: str):
+    actor_role_id = request.args.get("actor_role_id")
     with Session(engine) as db:
         if not _server_exists(db, server_id):
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_CHANNELS, actor_role_id)
+        if denied is not None:
+            return denied
         row = db.scalar(
             select(ChannelModel).where(
                 ChannelModel.server_id == server_id,
@@ -423,6 +558,7 @@ def get_roles(server_id: str):
                     "name": r.name,
                     "color": r.color,
                     "position": r.position,
+                    "permissions": _role_permissions_response(r),
                 }
                 for r in roles
             ]
@@ -436,6 +572,8 @@ def create_role(server_id: str):
     color = str(payload.get("color", "")).strip() or None
     requested_id = str(payload.get("id", "")).strip()
     position_raw = payload.get("position", 0)
+    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
+    permissions = _parse_permissions(payload.get("permissions"))
 
     if not name:
         return jsonify({"detail": "name is required"}), 400
@@ -448,6 +586,9 @@ def create_role(server_id: str):
     with Session(engine) as db:
         if not _server_exists(db, server_id):
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_ROLES, actor_role_id)
+        if denied is not None:
+            return denied
 
         base_id = requested_id or f"{server_id}-{_slugify(name)}"
         role_id = _next_unique_id(db, RoleModel, _truncate(base_id, 50))
@@ -457,6 +598,10 @@ def create_role(server_id: str):
             name=_truncate(name, 60),
             color=_truncate(color, 20) if color else None,
             position=position,
+            manage_server=permissions[PERM_MANAGE_SERVER],
+            manage_channels=permissions[PERM_MANAGE_CHANNELS],
+            manage_roles=permissions[PERM_MANAGE_ROLES],
+            manage_messages=permissions[PERM_MANAGE_MESSAGES],
         )
         db.add(row)
         db.commit()
@@ -467,6 +612,7 @@ def create_role(server_id: str):
                     "name": row.name,
                     "color": row.color,
                     "position": row.position,
+                    "permissions": _role_permissions_response(row),
                 }
             ),
             201,
@@ -479,10 +625,15 @@ def update_role(server_id: str, role_id: str):
     name = payload.get("name")
     color = payload.get("color")
     position_raw = payload.get("position")
+    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
+    permissions_payload = payload.get("permissions")
 
     with Session(engine) as db:
         if not _server_exists(db, server_id):
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_ROLES, actor_role_id)
+        if denied is not None:
+            return denied
 
         row = db.scalar(
             select(RoleModel).where(
@@ -509,6 +660,13 @@ def update_role(server_id: str, role_id: str):
             except (TypeError, ValueError):
                 return jsonify({"detail": "position must be a number"}), 400
 
+        if permissions_payload is not None:
+            permissions = _parse_permissions(permissions_payload)
+            row.manage_server = permissions[PERM_MANAGE_SERVER]
+            row.manage_channels = permissions[PERM_MANAGE_CHANNELS]
+            row.manage_roles = permissions[PERM_MANAGE_ROLES]
+            row.manage_messages = permissions[PERM_MANAGE_MESSAGES]
+
         db.commit()
         return jsonify(
             {
@@ -516,15 +674,20 @@ def update_role(server_id: str, role_id: str):
                 "name": row.name,
                 "color": row.color,
                 "position": row.position,
+                "permissions": _role_permissions_response(row),
             }
         )
 
 
 @app.delete("/servers/<server_id>/roles/<role_id>")
 def delete_role(server_id: str, role_id: str):
+    actor_role_id = request.args.get("actor_role_id")
     with Session(engine) as db:
         if not _server_exists(db, server_id):
             return jsonify({"detail": "Server not found"}), 404
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_ROLES, actor_role_id)
+        if denied is not None:
+            return denied
         if not _role_exists(db, server_id, role_id):
             return jsonify({"detail": "Role not found"}), 404
 
@@ -584,6 +747,11 @@ def create_message(server_id: str, channel_id: str):
         author = str(payload.get("author", "")).strip()
         text = str(payload.get("text", "")).strip()
         attachment = payload.get("attachment") or {}
+        actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
+
+        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_MESSAGES, actor_role_id)
+        if denied is not None:
+            return denied
 
         if not author or not text:
             return jsonify({"detail": "author and text are required"}), 400

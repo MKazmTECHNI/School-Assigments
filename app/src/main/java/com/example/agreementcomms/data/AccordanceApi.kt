@@ -1,5 +1,6 @@
 package com.example.agreementcomms.data
 
+import okhttp3.MultipartBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
@@ -8,9 +9,9 @@ import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
-import retrofit2.http.Path
 import retrofit2.http.Part
-import okhttp3.MultipartBody
+import retrofit2.http.Path
+import retrofit2.http.Query
 
 data class ApiServer(
     val id: String,
@@ -23,11 +24,19 @@ data class ApiChannel(
     val name: String
 )
 
+data class ApiRolePermissions(
+    val manageServer: Boolean = false,
+    val manageChannels: Boolean = false,
+    val manageRoles: Boolean = false,
+    val manageMessages: Boolean = false
+)
+
 data class ApiRole(
     val id: String,
     val name: String,
     val color: String? = null,
-    val position: Int = 0
+    val position: Int = 0,
+    val permissions: ApiRolePermissions = ApiRolePermissions()
 )
 
 data class ApiMessage(
@@ -61,7 +70,8 @@ data class UploadResponse(
 data class CreateMessageRequest(
     val author: String,
     val text: String,
-    val attachment: ApiAttachmentRequest? = null
+    val attachment: ApiAttachmentRequest? = null,
+    val actorRoleId: String? = null
 )
 
 data class CreateServerRequest(
@@ -77,24 +87,30 @@ data class UpdateServerRequest(
 
 data class CreateChannelRequest(
     val name: String,
-    val id: String? = null
+    val id: String? = null,
+    val actorRoleId: String? = null
 )
 
 data class UpdateChannelRequest(
-    val name: String
+    val name: String,
+    val actorRoleId: String? = null
 )
 
 data class CreateRoleRequest(
     val name: String,
     val color: String? = null,
     val position: Int = 0,
-    val id: String? = null
+    val id: String? = null,
+    val permissions: ApiRolePermissions? = null,
+    val actorRoleId: String? = null
 )
 
 data class UpdateRoleRequest(
     val name: String? = null,
     val color: String? = null,
-    val position: Int? = null
+    val position: Int? = null,
+    val permissions: ApiRolePermissions? = null,
+    val actorRoleId: String? = null
 )
 
 interface AccordanceApi {
@@ -107,11 +123,15 @@ interface AccordanceApi {
     @PATCH("servers/{serverId}")
     suspend fun updateServer(
         @Path("serverId") serverId: String,
+        @Query("actor_role_id") actorRoleId: String? = null,
         @Body request: UpdateServerRequest
     ): ApiServer
 
     @DELETE("servers/{serverId}")
-    suspend fun deleteServer(@Path("serverId") serverId: String)
+    suspend fun deleteServer(
+        @Path("serverId") serverId: String,
+        @Query("actor_role_id") actorRoleId: String? = null
+    )
 
     @GET("servers/{serverId}/channels")
     suspend fun getChannels(@Path("serverId") serverId: String): List<ApiChannel>
@@ -132,7 +152,8 @@ interface AccordanceApi {
     @DELETE("servers/{serverId}/channels/{channelId}")
     suspend fun deleteChannel(
         @Path("serverId") serverId: String,
-        @Path("channelId") channelId: String
+        @Path("channelId") channelId: String,
+        @Query("actor_role_id") actorRoleId: String? = null
     )
 
     @GET("servers/{serverId}/roles")
@@ -154,7 +175,8 @@ interface AccordanceApi {
     @DELETE("servers/{serverId}/roles/{roleId}")
     suspend fun deleteRole(
         @Path("serverId") serverId: String,
-        @Path("roleId") roleId: String
+        @Path("roleId") roleId: String,
+        @Query("actor_role_id") actorRoleId: String? = null
     )
 
     @GET("servers/{serverId}/channels/{channelId}/messages")
@@ -178,7 +200,6 @@ interface AccordanceApi {
 }
 
 object AccordanceApiClient {
-    // Android emulator -> host machine localhost
     const val BASE_URL = "http://10.0.2.2:8000/"
 
     val api: AccordanceApi by lazy {

@@ -26,7 +26,15 @@ data class Role(
     val id: String,
     val name: String,
     val color: String? = null,
-    val position: Int = 0
+    val position: Int = 0,
+    val permissions: RolePermissions = RolePermissions()
+)
+
+data class RolePermissions(
+    val manageServer: Boolean = false,
+    val manageChannels: Boolean = false,
+    val manageRoles: Boolean = false,
+    val manageMessages: Boolean = false
 )
 
 enum class AttachmentType {

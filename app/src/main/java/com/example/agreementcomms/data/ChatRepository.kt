@@ -6,6 +6,7 @@ import com.example.agreementcomms.AttachmentType
 import com.example.agreementcomms.Message
 import com.example.agreementcomms.MessageAttachment
 import com.example.agreementcomms.Role
+import com.example.agreementcomms.RolePermissions
 import com.example.agreementcomms.Server
 import com.example.agreementcomms.conversationKey
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -82,7 +83,8 @@ class ChatRepository {
         channelId: String,
         author: String,
         text: String,
-        attachment: ApiAttachmentRequest? = null
+        attachment: ApiAttachmentRequest? = null,
+        actorRoleId: String? = null
     ) {
         AccordanceApiClient.api.createMessage(
             serverId = serverId,
@@ -90,7 +92,8 @@ class ChatRepository {
             request = CreateMessageRequest(
                 author = author,
                 text = text,
-                attachment = attachment
+                attachment = attachment,
+                actorRoleId = actorRoleId
             )
         )
     }
@@ -120,10 +123,12 @@ class ChatRepository {
     suspend fun updateServer(
         serverId: String,
         name: String? = null,
-        icon: String? = null
+        icon: String? = null,
+        actorRoleId: String? = null
     ): Server {
         val updated = AccordanceApiClient.api.updateServer(
             serverId = serverId,
+            actorRoleId = actorRoleId,
             request = UpdateServerRequest(name = name, icon = icon)
         )
         return Server(
@@ -134,27 +139,32 @@ class ChatRepository {
         )
     }
 
-    suspend fun deleteServer(serverId: String) {
-        AccordanceApiClient.api.deleteServer(serverId)
+    suspend fun deleteServer(serverId: String, actorRoleId: String? = null) {
+        AccordanceApiClient.api.deleteServer(serverId, actorRoleId)
     }
 
-    suspend fun createChannel(serverId: String, name: String): ApiChannel {
+    suspend fun createChannel(serverId: String, name: String, actorRoleId: String? = null): ApiChannel {
         return AccordanceApiClient.api.createChannel(
             serverId = serverId,
-            request = CreateChannelRequest(name = name)
+            request = CreateChannelRequest(name = name, actorRoleId = actorRoleId)
         )
     }
 
-    suspend fun updateChannel(serverId: String, channelId: String, name: String): ApiChannel {
+    suspend fun updateChannel(
+        serverId: String,
+        channelId: String,
+        name: String,
+        actorRoleId: String? = null
+    ): ApiChannel {
         return AccordanceApiClient.api.updateChannel(
             serverId = serverId,
             channelId = channelId,
-            request = UpdateChannelRequest(name = name)
+            request = UpdateChannelRequest(name = name, actorRoleId = actorRoleId)
         )
     }
 
-    suspend fun deleteChannel(serverId: String, channelId: String) {
-        AccordanceApiClient.api.deleteChannel(serverId, channelId)
+    suspend fun deleteChannel(serverId: String, channelId: String, actorRoleId: String? = null) {
+        AccordanceApiClient.api.deleteChannel(serverId, channelId, actorRoleId)
     }
 
     suspend fun getRoles(serverId: String): List<Role> {
@@ -163,7 +173,13 @@ class ChatRepository {
                 id = it.id,
                 name = it.name,
                 color = it.color,
-                position = it.position
+                position = it.position,
+                permissions = RolePermissions(
+                    manageServer = it.permissions.manageServer,
+                    manageChannels = it.permissions.manageChannels,
+                    manageRoles = it.permissions.manageRoles,
+                    manageMessages = it.permissions.manageMessages
+                )
             )
         }
     }
@@ -172,21 +188,36 @@ class ChatRepository {
         serverId: String,
         name: String,
         color: String? = null,
-        position: Int = 0
+        position: Int = 0,
+        permissions: RolePermissions = RolePermissions(),
+        actorRoleId: String? = null
     ): Role {
         val created = AccordanceApiClient.api.createRole(
             serverId = serverId,
             request = CreateRoleRequest(
                 name = name,
                 color = color,
-                position = position
+                position = position,
+                permissions = ApiRolePermissions(
+                    manageServer = permissions.manageServer,
+                    manageChannels = permissions.manageChannels,
+                    manageRoles = permissions.manageRoles,
+                    manageMessages = permissions.manageMessages
+                ),
+                actorRoleId = actorRoleId
             )
         )
         return Role(
             id = created.id,
             name = created.name,
             color = created.color,
-            position = created.position
+            position = created.position,
+            permissions = RolePermissions(
+                manageServer = created.permissions.manageServer,
+                manageChannels = created.permissions.manageChannels,
+                manageRoles = created.permissions.manageRoles,
+                manageMessages = created.permissions.manageMessages
+            )
         )
     }
 
@@ -195,7 +226,9 @@ class ChatRepository {
         roleId: String,
         name: String? = null,
         color: String? = null,
-        position: Int? = null
+        position: Int? = null,
+        permissions: RolePermissions? = null,
+        actorRoleId: String? = null
     ): Role {
         val updated = AccordanceApiClient.api.updateRole(
             serverId = serverId,
@@ -203,19 +236,34 @@ class ChatRepository {
             request = UpdateRoleRequest(
                 name = name,
                 color = color,
-                position = position
+                position = position,
+                permissions = permissions?.let {
+                    ApiRolePermissions(
+                        manageServer = it.manageServer,
+                        manageChannels = it.manageChannels,
+                        manageRoles = it.manageRoles,
+                        manageMessages = it.manageMessages
+                    )
+                },
+                actorRoleId = actorRoleId
             )
         )
         return Role(
             id = updated.id,
             name = updated.name,
             color = updated.color,
-            position = updated.position
+            position = updated.position,
+            permissions = RolePermissions(
+                manageServer = updated.permissions.manageServer,
+                manageChannels = updated.permissions.manageChannels,
+                manageRoles = updated.permissions.manageRoles,
+                manageMessages = updated.permissions.manageMessages
+            )
         )
     }
 
-    suspend fun deleteRole(serverId: String, roleId: String) {
-        AccordanceApiClient.api.deleteRole(serverId, roleId)
+    suspend fun deleteRole(serverId: String, roleId: String, actorRoleId: String? = null) {
+        AccordanceApiClient.api.deleteRole(serverId, roleId, actorRoleId)
     }
 
     private fun toAbsoluteUrl(url: String): String {
