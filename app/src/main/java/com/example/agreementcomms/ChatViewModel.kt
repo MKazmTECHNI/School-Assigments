@@ -1,682 +1,432 @@
 package com.example.agreementcomms
 
 import android.app.Application
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.agreementcomms.data.ApiAttachmentRequest
-import com.example.agreementcomms.data.ChatRepository
-import com.example.agreementcomms.data.SettingsStore
-import com.example.agreementcomms.data.UserSettings
+import com.example.agreementcomms.data.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 data class ChatUiState(
     val isLoggedIn: Boolean = false,
+    val userId: String = "",
+    val token: String = "",
     val nickname: String = "",
+    val avatarUrl: String? = null,
+    val bio: String? = null,
     val draftNickname: String = "",
-    val servers: List<Server> = defaultServers(),
-    val selectedServerId: String = defaultServers().first().id,
-    val selectedChannel: String = defaultServers().first().channels.first(),
+    val draftPassword: String = "",
+    val isRegisterMode: Boolean = false,
+    val servers: List<Server> = emptyList(),
+    val selectedServerId: String = "",
+    val selectedChannelId: String = "",
     val section: MainSection = MainSection.Chat,
     val backendConnected: Boolean = false,
     val backendError: String? = null,
-    val composerAttachment: ComposerAttachment? = null,
+    val isLoading: Boolean = false,
     val settingsDisplayName: String = "",
     val settingsStatusText: String = "Online",
-    val settingsPushEnabled: Boolean = true,
-    val settingsVibrationEnabled: Boolean = true,
-    val settingsCompactModeEnabled: Boolean = false,
-    val settingsSavedAtLeastOnce: Boolean = false
+    val settingsBio: String = "",
+    val settingsAvatarUrl: String = "",
+    val typingUsers: Map<String, String> = emptyMap(),
+    val members: List<ApiMember> = emptyList(),
+    val serverRoles: List<Role> = emptyList(),
+    val channelOverrides: Map<String, RolePermissionsOverride> = emptyMap(),
+    // Preferences
+    val compactMode: Boolean = false,
+    val pushEnabled: Boolean = true,
+    val vibrationEnabled: Boolean = true
 )
 
-data class ComposerAttachment(
-    val type: AttachmentType,
-    val name: String,
-    val localUri: String,
-    val mimeType: String,
-    val sizeLabel: String? = null
-)
+class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
-class ChatViewModel(
-    application: Application
-) : AndroidViewModel(application) {
-
-    private val repository: ChatRepository = ChatRepository()
+    private val repository = ChatRepository()
     private val settingsStore = SettingsStore(application.applicationContext)
+    private val socketHandler = SocketHandler()
+    private val encryptionKey = "AccordanceKey123".toByteArray() 
 
     var uiState by mutableStateOf(ChatUiState())
         private set
 
-    val conversations = mutableStateMapOf<String, SnapshotStateList<Message>>().apply {
-        putAll(buildSampleConversations())
-    }
+    private val _errorEvents = MutableSharedFlow<String>()
+    val errorEvents = _errorEvents.asSharedFlow()
 
-    private val channelApiIds = mutableStateMapOf<String, String>()
-    private val rolesByServer = mutableStateMapOf<String, SnapshotStateList<Role>>()
-    private val actingRoleByServer = mutableStateMapOf<String, String>()
-
-    val unreadCounts = mutableStateMapOf(
-        conversationKey("general", "#offtopic") to 3,
-        conversationKey("mobile-dev", "#android") to 2,
-        conversationKey("szkola", "#terminy") to 1
-    )
-
-    private var backendTried = false
+    val conversations = mutableStateMapOf<String, SnapshotStateList<Message>>()
+    val unreadCounts = mutableStateMapOf<String, Int>()
+    private val typingMap = mutableStateMapOf<String, MutableSet<String>>()
 
     init {
         viewModelScope.launch {
             val loaded = settingsStore.settingsFlow.first()
-            uiState = uiState.copy(
-                settingsDisplayName = loaded.displayName,
-                settingsStatusText = loaded.statusText,
-                settingsPushEnabled = loaded.pushEnabled,
-                settingsVibrationEnabled = loaded.vibrationEnabled,
-                settingsCompactModeEnabled = loaded.compactModeEnabled,
-                settingsSavedAtLeastOnce =
-                    loaded.displayName.isNotBlank() ||
-                        loaded.statusText != "Online" ||
-                        !loaded.pushEnabled ||
-                        !loaded.vibrationEnabled ||
-                        loaded.compactModeEnabled
-            )
+            if (loaded.token.isNotBlank()) {
+                AccordanceApiClient.authInterceptor.token = loaded.token
+                uiState = uiState.copy(
+                    isLoggedIn = true, userId = loaded.userId, token = loaded.token,
+                    nickname = loaded.username, settingsDisplayName = loaded.displayName,
+                    settingsStatusText = loaded.statusText, settingsBio = loaded.bio,
+                    settingsAvatarUrl = loaded.avatarUrl,
+                    compactMode = loaded.compactModeEnabled,
+                    pushEnabled = loaded.pushEnabled,
+                    vibrationEnabled = loaded.vibrationEnabled
+                )
+                initSocket()
+                bootstrapFromBackend()
+            }
         }
     }
 
-    fun onDraftNicknameChange(value: String) {
-        uiState = uiState.copy(draftNickname = value)
+    private fun initSocket() {
+        socketHandler.establishConnection()
+        val socket = socketHandler.getSocket() ?: return
+        
+        socket.on(io.socket.client.Socket.EVENT_CONNECT) {
+            socket.emit("authenticate", JSONObject().apply { put("token", uiState.token) })
+            viewModelScope.launch { uiState = uiState.copy(backendConnected = true) }
+        }
+
+        socket.on(io.socket.client.Socket.EVENT_DISCONNECT) {
+            viewModelScope.launch { uiState = uiState.copy(backendConnected = false) }
+        }
+
+        socketHandler.onNewMessage { data -> handleIncomingSocketMessage(data) }
+
+        socket.on("user_typing") { args ->
+            val data = args[0] as JSONObject
+            val cid = data.getString("channelId")
+            val username = data.getString("username")
+            if (data.getString("userId") != uiState.userId) {
+                viewModelScope.launch {
+                    val users = typingMap.getOrPut(cid) { mutableSetOf() }
+                    users.add(username)
+                    updateTypingState()
+                    delay(4000)
+                    users.remove(username)
+                    updateTypingState()
+                }
+            }
+        }
+
+        socket.on("presence_update") { args ->
+            val data = args[0] as JSONObject
+            val uid = data.getString("userId")
+            val isOnline = data.getBoolean("isOnline")
+            viewModelScope.launch {
+                uiState = uiState.copy(members = uiState.members.map {
+                    if (it.userId == uid) it.copy(isOnline = isOnline) else it
+                })
+            }
+        }
+        socket.connect()
+    }
+
+    private fun handleIncomingSocketMessage(data: JSONObject) {
+        val cid = data.getString("channelId")
+        val encryptedText = data.getString("text")
+        val decryptedText = try { decrypt(encryptedText) } catch (e: Exception) { encryptedText }
+
+        val msg = Message(
+            id = data.optString("id", data.optInt("id", 0).toString()),
+            author = data.getString("author"),
+            text = decryptedText,
+            time = data.getString("time"),
+            isMine = data.getString("authorId") == uiState.userId
+        )
+        viewModelScope.launch {
+            val list = conversations.getOrPut(cid) { mutableStateListOf() }
+            if (list.none { it.id == msg.id }) {
+                list.add(msg)
+                if (cid != uiState.selectedChannelId) {
+                    unreadCounts[cid] = (unreadCounts[cid] ?: 0) + 1
+                }
+            }
+        }
+    }
+
+    private fun updateTypingState() {
+        uiState = uiState.copy(typingUsers = typingMap.mapValues { if (it.value.isEmpty()) "" else it.value.joinToString(", ") + " pisze..." })
     }
 
     fun login() {
-        val nick = uiState.draftNickname.trim()
-        if (nick.isBlank()) return
-        uiState = uiState.copy(isLoggedIn = true, nickname = nick)
-        bootstrapFromBackendIfNeeded()
+        if (uiState.draftNickname.isBlank() || uiState.draftPassword.isBlank()) return
+        viewModelScope.launch {
+            uiState = uiState.copy(isLoading = true)
+            try {
+                val resp = repository.login(uiState.draftNickname, uiState.draftPassword)
+                AccordanceApiClient.authInterceptor.token = resp.token
+                uiState = uiState.copy(
+                    isLoggedIn = true, token = resp.token, userId = resp.user.id, 
+                    nickname = resp.user.username, settingsDisplayName = resp.user.displayName ?: resp.user.username,
+                    settingsStatusText = resp.user.statusText ?: "Online",
+                    settingsBio = resp.user.bio ?: "", settingsAvatarUrl = resp.user.avatarUrl ?: ""
+                )
+                saveSettings()
+                initSocket()
+                bootstrapFromBackend()
+            } catch (e: Exception) {
+                _errorEvents.emit("Logowanie nieudane: ${e.message}")
+            } finally {
+                uiState = uiState.copy(isLoading = false)
+            }
+        }
     }
 
-    fun setSection(section: MainSection) {
-        uiState = uiState.copy(section = section)
+    fun register() {
+        if (uiState.draftNickname.isBlank() || uiState.draftPassword.isBlank()) return
+        viewModelScope.launch {
+            uiState = uiState.copy(isLoading = true)
+            try {
+                val resp = repository.register(uiState.draftNickname, uiState.draftPassword)
+                AccordanceApiClient.authInterceptor.token = resp.token
+                uiState = uiState.copy(
+                    isLoggedIn = true, token = resp.token, userId = resp.user.id, 
+                    nickname = resp.user.username, settingsDisplayName = resp.user.username,
+                    settingsStatusText = "Online", settingsBio = "", settingsAvatarUrl = ""
+                )
+                saveSettings()
+                _errorEvents.emit("Zarejestrowano pomyślnie!")
+                initSocket()
+                bootstrapFromBackend()
+            } catch (e: Exception) {
+                _errorEvents.emit("Rejestracja nieudana: ${e.message}")
+            } finally {
+                uiState = uiState.copy(isLoading = false)
+            }
+        }
+    }
+
+    fun joinServer(inviteCode: String) = viewModelScope.launch {
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.joinServer(inviteCode)
+            _errorEvents.emit("Dołączono do serwera!")
+            bootstrapFromBackend()
+        } catch (e: Exception) { _errorEvents.emit("Nieprawidłowy kod zaproszenia") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    fun createServer(name: String) = viewModelScope.launch {
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.createServer(name)
+            bootstrapFromBackend()
+        } catch (e: Exception) { _errorEvents.emit("Błąd tworzenia serwera: ${e.message}") }
+        finally { uiState = uiState.copy(isLoading = false) }
     }
 
     fun onServerSelected(serverId: String) {
-        val server = uiState.servers.firstOrNull { it.id == serverId } ?: return
-        val firstChannel = server.channels.firstOrNull().orEmpty()
-        uiState = uiState.copy(
-            selectedServerId = serverId,
-            selectedChannel = firstChannel,
-            section = MainSection.Chat
-        )
-        if (firstChannel.isNotBlank()) {
-            unreadCounts[conversationKey(serverId, firstChannel)] = 0
-        }
+        val server = uiState.servers.find { it.id == serverId } ?: return
+        uiState = uiState.copy(selectedServerId = serverId, selectedChannelId = server.channels.firstOrNull()?.id ?: "")
+        refreshMembers(serverId)
         refreshRoles(serverId)
+        refreshChannelOverrides()
+        socketHandler.joinChannel(uiState.selectedChannelId)
     }
 
-    fun onChannelSelected(channel: String) {
-        uiState = uiState.copy(selectedChannel = channel, section = MainSection.Chat)
-        unreadCounts[conversationKey(uiState.selectedServerId, channel)] = 0
+    fun onChannelSelected(channelId: String) {
+        uiState = uiState.copy(selectedChannelId = channelId)
+        refreshChannelOverrides()
+        socketHandler.joinChannel(channelId)
+        unreadCounts[channelId] = 0
     }
 
-    fun activeRoles(): List<Role> {
-        return rolesByServer[uiState.selectedServerId] ?: emptyList()
+    fun sendMessage(text: String) {
+        if (text.isBlank() || uiState.selectedChannelId.isBlank()) return
+        if (!canSendMessages()) {
+            viewModelScope.launch { _errorEvents.emit("Brak uprawnień do pisania") }
+            return
+        }
+        val encrypted = encrypt(text)
+        socketHandler.sendMessage(uiState.token, uiState.selectedServerId, uiState.selectedChannelId, encrypted)
     }
 
-    fun activeRoleId(): String {
-        return actingRoleByServer[uiState.selectedServerId].orEmpty()
+    fun sendTyping() {
+        if (uiState.selectedChannelId.isBlank()) return
+        socketHandler.getSocket()?.emit("typing_start", JSONObject().apply {
+            put("channelId", uiState.selectedChannelId)
+        })
     }
 
-    fun selectActiveRole(roleId: String) {
-        val serverId = uiState.selectedServerId
-        if (serverId.isBlank() || roleId.isBlank()) return
-        actingRoleByServer[serverId] = roleId
-    }
-
-    fun canManageServer(): Boolean = activePermission { it.manageServer }
-    fun canManageChannels(): Boolean = activePermission { it.manageChannels }
-    fun canManageRoles(): Boolean = activePermission { it.manageRoles }
-    fun canManageMessages(): Boolean = activePermission { it.manageMessages }
-
-    fun createServer(name: String, icon: String) {
-        val cleanedName = name.trim()
-        if (cleanedName.isBlank()) return
-
+    private fun bootstrapFromBackend() {
         viewModelScope.launch {
             try {
-                val created = repository.createServer(
-                    name = cleanedName,
-                    icon = icon.trim().ifBlank { null }
-                )
-                val defaultChannel = repository.createChannel(created.id, "#ogólny")
-                val serverWithChannel = created.copy(channels = listOf(defaultChannel.name))
-                val servers = uiState.servers + serverWithChannel
+                val payload = repository.fetchBackendBootstrap(uiState.nickname, uiState.userId)
+                conversations.putAll(payload.conversations)
                 uiState = uiState.copy(
-                    servers = servers,
-                    selectedServerId = serverWithChannel.id,
-                    selectedChannel = defaultChannel.name,
+                    servers = payload.servers,
+                    selectedServerId = uiState.selectedServerId.ifBlank { payload.servers.firstOrNull()?.id ?: "" },
+                    selectedChannelId = uiState.selectedChannelId.ifBlank { payload.servers.firstOrNull()?.channels?.firstOrNull()?.id ?: "" },
                     backendConnected = true,
                     backendError = null
                 )
-                val key = conversationKey(serverWithChannel.id, defaultChannel.name)
-                channelApiIds[key] = defaultChannel.id
-                conversations.getOrPut(key) { mutableStateListOf() }
-                unreadCounts[key] = 0
-                refreshRoles(serverWithChannel.id)
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się utworzyć serwera"
-                )
-            }
-        }
-    }
-
-    fun updateSelectedServer(name: String, icon: String) {
-        val serverId = uiState.selectedServerId
-        if (serverId.isBlank()) return
-        if (!canManageServer()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageServer")
-            return
-        }
-
-        val cleanedName = name.trim()
-        val cleanedIcon = icon.trim()
-        if (cleanedName.isBlank() || cleanedIcon.isBlank()) return
-
-        viewModelScope.launch {
-            try {
-                val updated = repository.updateServer(
-                    serverId = serverId,
-                    name = cleanedName,
-                    icon = cleanedIcon,
-                    actorRoleId = activeRoleId().ifBlank { null }
-                )
-                uiState = uiState.copy(
-                    servers = uiState.servers.map { server ->
-                        if (server.id == serverId) {
-                            server.copy(name = updated.name, icon = updated.icon)
-                        } else {
-                            server
-                        }
-                    },
-                    backendConnected = true,
-                    backendError = null
-                )
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się zaktualizować serwera"
-                )
-            }
-        }
-    }
-
-    fun deleteSelectedServer() {
-        val serverId = uiState.selectedServerId
-        if (serverId.isBlank()) return
-        if (!canManageServer()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageServer")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                repository.deleteServer(serverId, activeRoleId().ifBlank { null })
-
-                val remaining = uiState.servers.filterNot { it.id == serverId }
-                val nextServer = remaining.firstOrNull()
-                val nextChannel = nextServer?.channels?.firstOrNull().orEmpty()
-
-                val keysToRemove = channelApiIds.keys.filter { it.startsWith("$serverId|") }
-                keysToRemove.forEach { key ->
-                    channelApiIds.remove(key)
-                    conversations.remove(key)
-                    unreadCounts.remove(key)
+                if (uiState.selectedServerId.isNotBlank()) {
+                    refreshMembers(uiState.selectedServerId)
+                    refreshRoles(uiState.selectedServerId)
+                    refreshChannelOverrides()
                 }
-                rolesByServer.remove(serverId)
-                actingRoleByServer.remove(serverId)
-
-                uiState = uiState.copy(
-                    servers = remaining,
-                    selectedServerId = nextServer?.id.orEmpty(),
-                    selectedChannel = nextChannel,
-                    backendConnected = true,
-                    backendError = null
-                )
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się usunąć serwera"
-                )
-            }
-        }
-    }
-
-    fun createChannel(name: String) {
-        val serverId = uiState.selectedServerId
-        val cleanedName = name.trim()
-        if (serverId.isBlank() || cleanedName.isBlank()) return
-        if (!canManageChannels()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageChannels")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val created = repository.createChannel(serverId, cleanedName, activeRoleId().ifBlank { null })
-                uiState = uiState.copy(
-                    servers = uiState.servers.map { server ->
-                        if (server.id == serverId) {
-                            server.copy(channels = (server.channels + created.name).distinct())
-                        } else {
-                            server
-                        }
-                    },
-                    selectedChannel = if (uiState.selectedChannel.isBlank()) created.name else uiState.selectedChannel,
-                    backendConnected = true,
-                    backendError = null
-                )
-                val key = conversationKey(serverId, created.name)
-                channelApiIds[key] = created.id
-                conversations.getOrPut(key) { mutableStateListOf() }
-                unreadCounts[key] = 0
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się utworzyć kanału"
-                )
-            }
-        }
-    }
-
-    fun renameSelectedChannel(newName: String) {
-        val serverId = uiState.selectedServerId
-        val channelName = uiState.selectedChannel
-        val cleanedName = newName.trim()
-        if (serverId.isBlank() || channelName.isBlank() || cleanedName.isBlank()) return
-        if (!canManageChannels()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageChannels")
-            return
-        }
-
-        val oldKey = conversationKey(serverId, channelName)
-        val channelId = channelApiIds[oldKey] ?: return
-
-        viewModelScope.launch {
-            try {
-                val updated = repository.updateChannel(
-                    serverId = serverId,
-                    channelId = channelId,
-                    name = cleanedName,
-                    actorRoleId = activeRoleId().ifBlank { null }
-                )
-                val newKey = conversationKey(serverId, updated.name)
-
-                val movedConversation = conversations.remove(oldKey)
-                if (movedConversation != null) {
-                    conversations[newKey] = movedConversation
+                if (uiState.selectedChannelId.isNotBlank()) {
+                    socketHandler.joinChannel(uiState.selectedChannelId)
                 }
-                val unread = unreadCounts.remove(oldKey)
-                if (unread != null) {
-                    unreadCounts[newKey] = unread
-                }
-                channelApiIds.remove(oldKey)
-                channelApiIds[newKey] = updated.id
-
-                uiState = uiState.copy(
-                    servers = uiState.servers.map { server ->
-                        if (server.id == serverId) {
-                            server.copy(channels = server.channels.map { if (it == channelName) updated.name else it })
-                        } else {
-                            server
-                        }
-                    },
-                    selectedChannel = updated.name,
-                    backendConnected = true,
-                    backendError = null
-                )
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się zmienić nazwy kanału"
-                )
+            } catch (e: Exception) {
+                uiState = uiState.copy(backendConnected = false, backendError = e.message)
             }
         }
     }
 
-    fun deleteSelectedChannel() {
-        val serverId = uiState.selectedServerId
-        val channelName = uiState.selectedChannel
-        if (serverId.isBlank() || channelName.isBlank()) return
-        if (!canManageChannels()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageChannels")
-            return
+    private fun refreshMembers(sid: String) = viewModelScope.launch {
+        try { uiState = uiState.copy(members = repository.getMembers(sid)) } catch (_: Exception) {}
+    }
+
+    private fun refreshRoles(sid: String) = viewModelScope.launch {
+        try { uiState = uiState.copy(serverRoles = repository.getRoles(sid)) } catch (_: Exception) {}
+    }
+
+    private fun refreshChannelOverrides() = viewModelScope.launch {
+        if (uiState.selectedServerId.isBlank() || uiState.selectedChannelId.isBlank()) return@launch
+        try {
+            val ovs = repository.getChannelRoleOverrides(uiState.selectedServerId, uiState.selectedChannelId)
+            uiState = uiState.copy(channelOverrides = ovs)
+        } catch (_: Exception) {}
+    }
+
+    // --- PERMISSIONS Logic ---
+    private fun getEffectivePermissions(): RolePermissions {
+        val server = uiState.servers.find { it.id == uiState.selectedServerId }
+        if (server?.ownerId == uiState.userId) {
+            return RolePermissions(true, true, true, true)
         }
-
-        val oldKey = conversationKey(serverId, channelName)
-        val channelId = channelApiIds[oldKey] ?: return
-
-        viewModelScope.launch {
-            try {
-                repository.deleteChannel(serverId, channelId, activeRoleId().ifBlank { null })
-
-                val updatedServers = uiState.servers.map { server ->
-                    if (server.id == serverId) {
-                        server.copy(channels = server.channels.filterNot { it == channelName })
-                    } else {
-                        server
-                    }
-                }
-                val updatedServer = updatedServers.firstOrNull { it.id == serverId }
-                val nextChannel = updatedServer?.channels?.firstOrNull().orEmpty()
-
-                channelApiIds.remove(oldKey)
-                conversations.remove(oldKey)
-                unreadCounts.remove(oldKey)
-
-                uiState = uiState.copy(
-                    servers = updatedServers,
-                    selectedChannel = nextChannel,
-                    backendConnected = true,
-                    backendError = null
-                )
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się usunąć kanału"
-                )
-            }
-        }
-    }
-
-    fun createRole(name: String, color: String?, position: Int, permissions: RolePermissions = RolePermissions()) {
-        val serverId = uiState.selectedServerId
-        val cleanedName = name.trim()
-        if (serverId.isBlank() || cleanedName.isBlank()) return
-        if (!canManageRoles()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageRoles")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val created = repository.createRole(
-                    serverId = serverId,
-                    name = cleanedName,
-                    color = color?.trim()?.ifBlank { null },
-                    position = position,
-                    permissions = permissions,
-                    actorRoleId = activeRoleId().ifBlank { null }
-                )
-                val list = rolesByServer.getOrPut(serverId) { mutableStateListOf() }
-                list.add(created)
-                sortRoles(list)
-                uiState = uiState.copy(backendConnected = true, backendError = null)
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się utworzyć roli"
-                )
-            }
-        }
-    }
-
-    fun updateRole(
-        roleId: String,
-        name: String,
-        color: String?,
-        position: Int?,
-        permissions: RolePermissions? = null
-    ) {
-        val serverId = uiState.selectedServerId
-        val cleanedName = name.trim()
-        if (serverId.isBlank() || roleId.isBlank() || cleanedName.isBlank()) return
-        if (!canManageRoles()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageRoles")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val updated = repository.updateRole(
-                    serverId = serverId,
-                    roleId = roleId,
-                    name = cleanedName,
-                    color = color?.trim()?.ifBlank { null },
-                    position = position,
-                    permissions = permissions,
-                    actorRoleId = activeRoleId().ifBlank { null }
-                )
-                val list = rolesByServer.getOrPut(serverId) { mutableStateListOf() }
-                val index = list.indexOfFirst { it.id == roleId }
-                if (index >= 0) {
-                    list[index] = updated
-                } else {
-                    list.add(updated)
-                }
-                sortRoles(list)
-                uiState = uiState.copy(backendConnected = true, backendError = null)
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się zaktualizować roli"
-                )
-            }
-        }
-    }
-
-    fun deleteRole(roleId: String) {
-        val serverId = uiState.selectedServerId
-        if (serverId.isBlank() || roleId.isBlank()) return
-        if (!canManageRoles()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageRoles")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                repository.deleteRole(serverId, roleId, activeRoleId().ifBlank { null })
-                rolesByServer[serverId]?.removeAll { it.id == roleId }
-                uiState = uiState.copy(backendConnected = true, backendError = null)
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się usunąć roli"
-                )
-            }
-        }
-    }
-
-    fun setComposerAttachment(attachment: ComposerAttachment?) {
-        uiState = uiState.copy(composerAttachment = attachment)
-    }
-
-    fun onSettingsDisplayNameChange(value: String) {
-        uiState = uiState.copy(settingsDisplayName = value)
-    }
-
-    fun onSettingsStatusTextChange(value: String) {
-        uiState = uiState.copy(settingsStatusText = value)
-    }
-
-    fun onSettingsPushEnabledChange(enabled: Boolean) {
-        uiState = uiState.copy(settingsPushEnabled = enabled)
-    }
-
-    fun onSettingsVibrationEnabledChange(enabled: Boolean) {
-        uiState = uiState.copy(settingsVibrationEnabled = enabled)
-    }
-
-    fun onSettingsCompactModeEnabledChange(enabled: Boolean) {
-        uiState = uiState.copy(settingsCompactModeEnabled = enabled)
-    }
-
-    fun saveSettings() {
-        viewModelScope.launch {
-            settingsStore.save(
-                UserSettings(
-                    displayName = uiState.settingsDisplayName,
-                    statusText = uiState.settingsStatusText,
-                    pushEnabled = uiState.settingsPushEnabled,
-                    vibrationEnabled = uiState.settingsVibrationEnabled,
-                    compactModeEnabled = uiState.settingsCompactModeEnabled
-                )
-            )
-            uiState = uiState.copy(settingsSavedAtLeastOnce = true)
-        }
-    }
-
-    fun sendMessage(
-        text: String,
-        attachmentBytes: ByteArray? = null,
-        attachmentFileName: String? = null,
-        attachmentMimeType: String? = null
-    ) {
-        val messageText = text.trim()
-        val localAttachment = uiState.composerAttachment
-        if (messageText.isBlank() && localAttachment == null) return
-        if (uiState.selectedChannel.isBlank()) return
-        if (!canManageMessages()) {
-            uiState = uiState.copy(backendError = "Brak uprawnień: manageMessages")
-            return
-        }
-
-        val finalText = if (messageText.isBlank()) "Załącznik" else messageText
-        val convKey = conversationKey(uiState.selectedServerId, uiState.selectedChannel)
-        conversations.getOrPut(convKey) { mutableStateListOf() }.add(
-            Message(
-                author = uiState.nickname,
-                text = finalText,
-                time = "teraz",
-                isMine = true,
-                attachments = localAttachment?.let {
-                    listOf(
-                        MessageAttachment(
-                            type = it.type,
-                            name = it.name,
-                            url = it.localUri,
-                            meta = it.sizeLabel
-                        )
-                    )
-                } ?: emptyList()
-            )
+        
+        val member = uiState.members.find { it.userId == uiState.userId } ?: return RolePermissions()
+        val roleIds = member.roles.map { it.id }
+        val roles = uiState.serverRoles.filter { it.id in roleIds }
+        
+        val base = RolePermissions(
+            manageServer = roles.any { it.permissions.manageServer },
+            manageChannels = roles.any { it.permissions.manageChannels },
+            manageRoles = roles.any { it.permissions.manageRoles },
+            manageMessages = roles.any { it.permissions.manageMessages }
         )
+        
+        val overrides = uiState.channelOverrides.filter { it.key in roleIds }.values
+        return RolePermissions(
+            manageServer = overrides.mapNotNull { it.manageServer }.firstOrNull() ?: base.manageServer,
+            manageChannels = overrides.mapNotNull { it.manageChannels }.firstOrNull() ?: base.manageChannels,
+            manageRoles = overrides.mapNotNull { it.manageRoles }.firstOrNull() ?: base.manageRoles,
+            manageMessages = overrides.mapNotNull { it.manageMessages }.firstOrNull() ?: base.manageMessages
+        )
+    }
 
-        uiState = uiState.copy(composerAttachment = null)
+    fun canManageServer() = getEffectivePermissions().manageServer
+    fun canManageChannels() = getEffectivePermissions().manageChannels
+    fun canManageRoles() = getEffectivePermissions().manageRoles
+    fun canSendMessages() = getEffectivePermissions().manageMessages
 
-        val apiChannelId = channelApiIds[convKey] ?: return
+    // --- Actions ---
+    fun assignRole(uid: String, rid: String) = viewModelScope.launch {
+        if (!canManageRoles()) return@launch
+        try { repository.addRoleToMember(uiState.selectedServerId, uid, rid); refreshMembers(uiState.selectedServerId) }
+        catch (e: Exception) { _errorEvents.emit("Błąd uprawnień") }
+    }
+
+    fun removeRole(uid: String, rid: String) = viewModelScope.launch {
+        if (!canManageRoles()) return@launch
+        try { repository.removeRoleFromMember(uiState.selectedServerId, uid, rid); refreshMembers(uiState.selectedServerId) }
+        catch (e: Exception) { _errorEvents.emit("Błąd uprawnień") }
+    }
+
+    fun createChannel(serverId: String, name: String) = viewModelScope.launch {
+        if (!canManageChannels()) return@launch
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.createChannel(serverId, name)
+            bootstrapFromBackend()
+        } catch (e: Exception) { _errorEvents.emit("Błąd tworzenia kanału") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    fun deleteChannel(channelId: String) = viewModelScope.launch {
+        if (!canManageChannels()) return@launch
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.deleteChannel(uiState.selectedServerId, channelId)
+            bootstrapFromBackend()
+        } catch (e: Exception) { _errorEvents.emit("Błąd usuwania kanału") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    fun deleteServer() = viewModelScope.launch {
+        if (!canManageServer()) return@launch
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.deleteServer(uiState.selectedServerId)
+            uiState = uiState.copy(selectedServerId = "", selectedChannelId = "")
+            bootstrapFromBackend()
+            _errorEvents.emit("Serwer został usunięty")
+        } catch (e: Exception) { _errorEvents.emit("Błąd usuwania serwera") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    fun saveProfile() = viewModelScope.launch {
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.updateProfile(uiState.settingsDisplayName, uiState.settingsStatusText, uiState.settingsBio, uiState.settingsAvatarUrl)
+            saveSettings()
+            _errorEvents.emit("Profil zaktualizowany")
+        } catch (e: Exception) { _errorEvents.emit("Błąd zapisu") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    private fun saveSettings() = viewModelScope.launch {
+        settingsStore.save(UserSettings(
+            token = uiState.token, userId = uiState.userId, username = uiState.nickname,
+            displayName = uiState.settingsDisplayName, statusText = uiState.settingsStatusText,
+            bio = uiState.settingsBio, avatarUrl = uiState.settingsAvatarUrl,
+            compactModeEnabled = uiState.compactMode, pushEnabled = uiState.pushEnabled,
+            vibrationEnabled = uiState.vibrationEnabled
+        ))
+    }
+
+    fun toggleCompactMode() { uiState = uiState.copy(compactMode = !uiState.compactMode); saveSettings() }
+    fun togglePush() { uiState = uiState.copy(pushEnabled = !uiState.pushEnabled); saveSettings() }
+    fun toggleVibration() { uiState = uiState.copy(vibrationEnabled = !uiState.vibrationEnabled); saveSettings() }
+
+    fun logout() {
         viewModelScope.launch {
-            try {
-                val uploadedAttachment = if (
-                    attachmentBytes != null &&
-                    attachmentFileName != null &&
-                    attachmentMimeType != null
-                ) {
-                    repository.uploadAttachment(
-                        fileName = attachmentFileName,
-                        mimeType = attachmentMimeType,
-                        content = attachmentBytes
-                    )
-                } else {
-                    null
-                }
-
-                repository.sendMessage(
-                    serverId = uiState.selectedServerId,
-                    channelId = apiChannelId,
-                    author = uiState.nickname,
-                    text = finalText,
-                    attachment = uploadedAttachment?.let {
-                        ApiAttachmentRequest(
-                            type = it.type,
-                            name = it.name,
-                            path = it.path
-                        )
-                    },
-                    actorRoleId = activeRoleId().ifBlank { null }
-                )
-                uiState = uiState.copy(backendConnected = true, backendError = null)
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Wysłanie do backendu nie powiodło się"
-                )
-            }
+            settingsStore.clearAuth()
+            socketHandler.closeConnection()
+            uiState = ChatUiState()
+            conversations.clear()
         }
     }
 
-    fun activeMessages(): List<Message> {
-        val key = conversationKey(uiState.selectedServerId, uiState.selectedChannel)
-        return conversations.getOrPut(key) { mutableStateListOf() }
+    private fun encrypt(text: String): String {
+        val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(encryptionKey, "AES"))
+        return Base64.getEncoder().encodeToString(cipher.doFinal(text.toByteArray()))
     }
 
-    private fun bootstrapFromBackendIfNeeded() {
-        if (backendTried) return
-        backendTried = true
-
-        viewModelScope.launch {
-            try {
-                val payload = repository.fetchBackendBootstrap(uiState.nickname)
-                if (payload.servers.isNotEmpty()) {
-                    conversations.clear()
-                    conversations.putAll(payload.conversations)
-                    channelApiIds.clear()
-                    channelApiIds.putAll(payload.channelApiIds)
-                    rolesByServer.clear()
-
-                    uiState = uiState.copy(
-                        servers = payload.servers,
-                        selectedServerId = payload.servers.first().id,
-                        selectedChannel = payload.servers.first().channels.firstOrNull().orEmpty(),
-                        backendConnected = true,
-                        backendError = null
-                    )
-                    payload.servers.forEach { server ->
-                        refreshRoles(server.id)
-                    }
-                }
-            } catch (ex: Exception) {
-                uiState = uiState.copy(
-                    backendConnected = false,
-                    backendError = ex.message ?: "Nie udało się połączyć z backendem"
-                )
-            }
-        }
+    private fun decrypt(encrypted: String): String {
+        return try {
+            val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(encryptionKey, "AES"))
+            String(cipher.doFinal(Base64.getDecoder().decode(encrypted)))
+        } catch (e: Exception) { encrypted }
     }
 
-    private fun refreshRoles(serverId: String) {
-        if (serverId.isBlank()) return
-        viewModelScope.launch {
-            try {
-                val roles = repository.getRoles(serverId)
-                val sorted = roles.sortedByDescending { it.position }
-                rolesByServer[serverId] = mutableStateListOf<Role>().apply { addAll(sorted) }
-                val selectedRoleId = actingRoleByServer[serverId]
-                if (selectedRoleId.isNullOrBlank() || sorted.none { it.id == selectedRoleId }) {
-                    actingRoleByServer[serverId] = sorted.firstOrNull()?.id.orEmpty()
-                }
-                uiState = uiState.copy(backendConnected = true, backendError = null)
-            } catch (_: Exception) {
-                // Keep chat functional even if roles endpoint is unavailable.
-            }
-        }
-    }
-
-    private fun activePermission(selector: (RolePermissions) -> Boolean): Boolean {
-        if (activeRoles().isEmpty()) return true
-        val roleId = activeRoleId()
-        if (roleId.isBlank()) return true
-        val role = activeRoles().firstOrNull { it.id == roleId } ?: return false
-        return selector(role.permissions)
-    }
-
-    private fun sortRoles(list: SnapshotStateList<Role>) {
-        val sorted = list.sortedByDescending { it.position }
-        list.clear()
-        list.addAll(sorted)
-    }
+    fun onSettingsDisplayNameChange(v: String) { uiState = uiState.copy(settingsDisplayName = v) }
+    fun onSettingsStatusTextChange(v: String) { uiState = uiState.copy(settingsStatusText = v) }
+    fun onSettingsBioChange(v: String) { uiState = uiState.copy(settingsBio = v) }
+    fun onSettingsAvatarUrlChange(v: String) { uiState = uiState.copy(settingsAvatarUrl = v) }
+    fun onDraftNicknameChange(v: String) { uiState = uiState.copy(draftNickname = v) }
+    fun onDraftPasswordChange(v: String) { uiState = uiState.copy(draftPassword = v) }
+    fun toggleRegisterMode() { uiState = uiState.copy(isRegisterMode = !uiState.isRegisterMode) }
+    fun setSection(s: MainSection) { uiState = uiState.copy(section = s) }
 }

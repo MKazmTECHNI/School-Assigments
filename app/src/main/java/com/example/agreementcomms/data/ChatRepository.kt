@@ -2,68 +2,87 @@ package com.example.agreementcomms.data
 
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import com.example.agreementcomms.AttachmentType
-import com.example.agreementcomms.Message
-import com.example.agreementcomms.MessageAttachment
-import com.example.agreementcomms.Role
-import com.example.agreementcomms.RolePermissions
-import com.example.agreementcomms.Server
-import com.example.agreementcomms.conversationKey
+import com.example.agreementcomms.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class ChatRepository {
-    suspend fun fetchBackendBootstrap(nickname: String): BackendBootstrap {
+    suspend fun register(username: String, password: String): AuthResponse {
+        val resp = AccordanceApiClient.api.register(AuthRequest(username, password))
+        AccordanceApiClient.authInterceptor.token = resp.token
+        return resp
+    }
+
+    suspend fun login(username: String, password: String): AuthResponse {
+        val resp = AccordanceApiClient.api.login(AuthRequest(username, password))
+        AccordanceApiClient.authInterceptor.token = resp.token
+        return resp
+    }
+
+    suspend fun updateProfile(displayName: String?, statusText: String?, bio: String?, avatarUrl: String?): ApiUser {
+        return AccordanceApiClient.api.updateProfile(ApiUser("", "", displayName, avatarUrl, statusText, bio))
+    }
+
+    suspend fun fetchBackendBootstrap(nickname: String, userId: String): BackendBootstrap {
         val api = AccordanceApiClient.api
         val apiServers = api.getServers()
 
         val mappedServers = mutableListOf<Server>()
         val mappedConversations = mutableMapOf<String, SnapshotStateList<Message>>()
-        val channelApiIds = mutableMapOf<String, String>()
+        val channelSettings = mutableMapOf<String, ChannelSettings>()
 
         for (server in apiServers) {
-            val channels = api.getChannels(server.id)
+            val apiChannels = api.getChannels(server.id)
+            val channels = apiChannels.map {
+                Channel(
+                    id = it.id,
+                    name = it.name,
+                    serverId = server.id,
+                    topic = it.topic,
+                    category = it.category,
+                    slowmodeSeconds = it.slowmodeSeconds,
+                    isNsfw = it.isNsfw
+                )
+            }
             mappedServers.add(
                 Server(
                     id = server.id,
                     name = server.name,
                     icon = server.icon,
-                    channels = channels.map { it.name }
+                    channels = channels,
+                    ownerId = server.ownerId,
+                    inviteCode = server.inviteCode
                 )
             )
 
             for (channel in channels) {
-                val key = conversationKey(server.id, channel.name)
-                channelApiIds[key] = channel.id
+                val key = channel.id
+                channelSettings[key] = ChannelSettings(
+                    topic = channel.topic,
+                    slowmodeSeconds = channel.slowmodeSeconds,
+                    isNsfw = channel.isNsfw,
+                    category = channel.category
+                )
 
-                val messages = api.getMessages(server.id, channel.id)
+                val messages = try { api.getMessages(server.id, channel.id) } catch (e: Exception) { emptyList() }
                 mappedConversations[key] = mutableStateListOf<Message>().apply {
                     addAll(
                         messages.map {
-                            val attachment = it.attachment
-                            val mappedAttachment = if (attachment != null) {
-                                listOf(
-                                    MessageAttachment(
-                                        type = if (attachment.type.equals("image", ignoreCase = true)) {
-                                            AttachmentType.Image
-                                        } else {
-                                            AttachmentType.File
-                                        },
-                                        name = attachment.name,
-                                        url = attachment.url?.let(::toAbsoluteUrl)
-                                    )
-                                )
-                            } else {
-                                emptyList()
-                            }
-
                             Message(
+                                id = it.id,
                                 author = it.author,
                                 text = it.text,
                                 time = it.time,
-                                isMine = it.author.equals(nickname, ignoreCase = true),
-                                attachments = mappedAttachment
+                                isMine = it.authorId == userId,
+                                authorId = it.authorId,
+                                attachments = it.attachment?.let { att ->
+                                    listOf(MessageAttachment(
+                                        type = if (att.type == "image") AttachmentType.Image else AttachmentType.File,
+                                        name = att.name,
+                                        url = att.url
+                                    ))
+                                } ?: emptyList()
                             )
                         }
                     )
@@ -74,209 +93,87 @@ class ChatRepository {
         return BackendBootstrap(
             servers = mappedServers,
             conversations = mappedConversations,
-            channelApiIds = channelApiIds
+            channelSettings = channelSettings
         )
     }
 
-    suspend fun sendMessage(
-        serverId: String,
-        channelId: String,
-        author: String,
-        text: String,
-        attachment: ApiAttachmentRequest? = null,
-        actorRoleId: String? = null
-    ) {
-        AccordanceApiClient.api.createMessage(
-            serverId = serverId,
-            channelId = channelId,
-            request = CreateMessageRequest(
-                author = author,
-                text = text,
-                attachment = attachment,
-                actorRoleId = actorRoleId
-            )
-        )
-    }
-
-    suspend fun uploadAttachment(
-        fileName: String,
-        mimeType: String,
-        content: ByteArray
-    ): UploadResponse {
-        val requestBody = content.toRequestBody(mimeType.toMediaTypeOrNull())
-        val part = MultipartBody.Part.createFormData("file", fileName, requestBody)
-        return AccordanceApiClient.api.uploadFile(part)
-    }
-
-    suspend fun createServer(name: String, icon: String? = null): Server {
-        val created = AccordanceApiClient.api.createServer(
-            CreateServerRequest(name = name, icon = icon)
-        )
-        return Server(
-            id = created.id,
-            name = created.name,
-            icon = created.icon,
-            channels = emptyList()
-        )
-    }
-
-    suspend fun updateServer(
-        serverId: String,
-        name: String? = null,
-        icon: String? = null,
-        actorRoleId: String? = null
-    ): Server {
-        val updated = AccordanceApiClient.api.updateServer(
-            serverId = serverId,
-            actorRoleId = actorRoleId,
-            request = UpdateServerRequest(name = name, icon = icon)
-        )
-        return Server(
-            id = updated.id,
-            name = updated.name,
-            icon = updated.icon,
-            channels = emptyList()
-        )
-    }
-
-    suspend fun deleteServer(serverId: String, actorRoleId: String? = null) {
-        AccordanceApiClient.api.deleteServer(serverId, actorRoleId)
-    }
-
-    suspend fun createChannel(serverId: String, name: String, actorRoleId: String? = null): ApiChannel {
-        return AccordanceApiClient.api.createChannel(
-            serverId = serverId,
-            request = CreateChannelRequest(name = name, actorRoleId = actorRoleId)
-        )
-    }
-
-    suspend fun updateChannel(
-        serverId: String,
-        channelId: String,
-        name: String,
-        actorRoleId: String? = null
-    ): ApiChannel {
-        return AccordanceApiClient.api.updateChannel(
-            serverId = serverId,
-            channelId = channelId,
-            request = UpdateChannelRequest(name = name, actorRoleId = actorRoleId)
-        )
-    }
-
-    suspend fun deleteChannel(serverId: String, channelId: String, actorRoleId: String? = null) {
-        AccordanceApiClient.api.deleteChannel(serverId, channelId, actorRoleId)
-    }
-
+    suspend fun getMembers(serverId: String): List<ApiMember> = AccordanceApiClient.api.getMembers(serverId)
+    
     suspend fun getRoles(serverId: String): List<Role> {
         return AccordanceApiClient.api.getRoles(serverId).map {
-            Role(
-                id = it.id,
-                name = it.name,
-                color = it.color,
-                position = it.position,
-                permissions = RolePermissions(
-                    manageServer = it.permissions.manageServer,
-                    manageChannels = it.permissions.manageChannels,
-                    manageRoles = it.permissions.manageRoles,
-                    manageMessages = it.permissions.manageMessages
-                )
+            Role(it.id, it.name, it.color, it.position, RolePermissions(
+                it.permissions.manageServer, it.permissions.manageChannels,
+                it.permissions.manageRoles, it.permissions.manageMessages
+            ))
+        }
+    }
+
+    suspend fun addRoleToMember(serverId: String, userId: String, roleId: String) = 
+        AccordanceApiClient.api.addRoleToMember(serverId, userId, roleId)
+    
+    suspend fun removeRoleFromMember(serverId: String, userId: String, roleId: String) = 
+        AccordanceApiClient.api.removeRoleFromMember(serverId, userId, roleId)
+
+    suspend fun createServer(name: String, icon: String? = null): Server {
+        val created = AccordanceApiClient.api.createServer(CreateServerRequest(name, icon))
+        return Server(created.id, created.name, created.icon, emptyList(), ownerId = created.ownerId, inviteCode = created.inviteCode)
+    }
+
+    suspend fun joinServer(inviteCode: String): Server {
+        val joined = AccordanceApiClient.api.joinServer(inviteCode)
+        return Server(joined.id, joined.name, joined.icon, emptyList(), ownerId = joined.ownerId)
+    }
+
+    suspend fun updateServer(serverId: String, name: String?, icon: String?): ApiServer {
+        return AccordanceApiClient.api.updateServer(serverId, UpdateServerRequest(name, icon))
+    }
+
+    suspend fun deleteServer(serverId: String) = AccordanceApiClient.api.deleteServer(serverId)
+
+    suspend fun createChannel(serverId: String, name: String, category: String? = "KANAŁY TEKSTOWE"): Channel {
+        val created = AccordanceApiClient.api.createChannel(serverId, CreateChannelRequest(name, category = category))
+        return Channel(created.id, created.name, serverId, category = created.category)
+    }
+
+    suspend fun updateChannel(serverId: String, channelId: String, name: String?, topic: String?, category: String?): ApiChannel {
+        return AccordanceApiClient.api.updateChannel(serverId, channelId, UpdateChannelRequest(name, topic, category = category))
+    }
+
+    suspend fun deleteChannel(serverId: String, channelId: String) = AccordanceApiClient.api.deleteChannel(serverId, channelId)
+
+    suspend fun createRole(serverId: String, name: String, color: String?, position: Int, permissions: RolePermissions): Role {
+        val apiPerms = ApiRolePermissions(permissions.manageServer, permissions.manageChannels, permissions.manageRoles, permissions.manageMessages)
+        val created = AccordanceApiClient.api.createRole(serverId, CreateRoleRequest(name, color, position, apiPerms))
+        return Role(created.id, created.name, created.color, created.position, permissions)
+    }
+
+    suspend fun updateRole(serverId: String, roleId: String, name: String?, color: String?, position: Int?, permissions: RolePermissions?): Role {
+        val apiPerms = permissions?.let { ApiRolePermissions(it.manageServer, it.manageChannels, it.manageRoles, it.manageMessages) }
+        val updated = AccordanceApiClient.api.updateRole(serverId, roleId, UpdateRoleRequest(name, color, position, apiPerms))
+        return Role(updated.id, updated.name, updated.color, updated.position, permissions ?: RolePermissions())
+    }
+
+    suspend fun deleteRole(serverId: String, roleId: String) = AccordanceApiClient.api.deleteRole(serverId, roleId)
+
+    suspend fun getChannelRoleOverrides(serverId: String, channelId: String): Map<String, RolePermissionsOverride> {
+        val overrides = AccordanceApiClient.api.getChannelRoleOverrides(serverId, channelId)
+        return overrides.associate { 
+            it.roleId to RolePermissionsOverride(
+                it.permissions.manageServer, it.permissions.manageChannels, 
+                it.permissions.manageRoles, it.permissions.manageMessages
             )
         }
     }
 
-    suspend fun createRole(
-        serverId: String,
-        name: String,
-        color: String? = null,
-        position: Int = 0,
-        permissions: RolePermissions = RolePermissions(),
-        actorRoleId: String? = null
-    ): Role {
-        val created = AccordanceApiClient.api.createRole(
-            serverId = serverId,
-            request = CreateRoleRequest(
-                name = name,
-                color = color,
-                position = position,
-                permissions = ApiRolePermissions(
-                    manageServer = permissions.manageServer,
-                    manageChannels = permissions.manageChannels,
-                    manageRoles = permissions.manageRoles,
-                    manageMessages = permissions.manageMessages
-                ),
-                actorRoleId = actorRoleId
-            )
-        )
-        return Role(
-            id = created.id,
-            name = created.name,
-            color = created.color,
-            position = created.position,
-            permissions = RolePermissions(
-                manageServer = created.permissions.manageServer,
-                manageChannels = created.permissions.manageChannels,
-                manageRoles = created.permissions.manageRoles,
-                manageMessages = created.permissions.manageMessages
-            )
-        )
-    }
-
-    suspend fun updateRole(
-        serverId: String,
-        roleId: String,
-        name: String? = null,
-        color: String? = null,
-        position: Int? = null,
-        permissions: RolePermissions? = null,
-        actorRoleId: String? = null
-    ): Role {
-        val updated = AccordanceApiClient.api.updateRole(
-            serverId = serverId,
-            roleId = roleId,
-            request = UpdateRoleRequest(
-                name = name,
-                color = color,
-                position = position,
-                permissions = permissions?.let {
-                    ApiRolePermissions(
-                        manageServer = it.manageServer,
-                        manageChannels = it.manageChannels,
-                        manageRoles = it.manageRoles,
-                        manageMessages = it.manageMessages
-                    )
-                },
-                actorRoleId = actorRoleId
-            )
-        )
-        return Role(
-            id = updated.id,
-            name = updated.name,
-            color = updated.color,
-            position = updated.position,
-            permissions = RolePermissions(
-                manageServer = updated.permissions.manageServer,
-                manageChannels = updated.permissions.manageChannels,
-                manageRoles = updated.permissions.manageRoles,
-                manageMessages = updated.permissions.manageMessages
-            )
-        )
-    }
-
-    suspend fun deleteRole(serverId: String, roleId: String, actorRoleId: String? = null) {
-        AccordanceApiClient.api.deleteRole(serverId, roleId, actorRoleId)
-    }
-
-    private fun toAbsoluteUrl(url: String): String {
-        return if (url.startsWith("http://") || url.startsWith("https://")) {
-            url
-        } else {
-            AccordanceApiClient.BASE_URL.trimEnd('/') + "/" + url.trimStart('/')
-        }
+    suspend fun uploadAttachment(fileName: String, mimeType: String, content: ByteArray): UploadResponse {
+        val body = content.toRequestBody(mimeType.toMediaTypeOrNull())
+        val part = MultipartBody.Part.createFormData("file", fileName, body)
+        return AccordanceApiClient.api.uploadFile(part)
     }
 }
 
 data class BackendBootstrap(
     val servers: List<Server>,
     val conversations: Map<String, SnapshotStateList<Message>>,
-    val channelApiIds: Map<String, String>
+    val channelSettings: Map<String, ChannelSettings>
 )

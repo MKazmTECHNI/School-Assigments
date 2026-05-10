@@ -1,47 +1,26 @@
 package com.example.agreementcomms
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDrawerState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.example.agreementcomms.data.ApiMember
 import kotlinx.coroutines.launch
 
 @Composable
@@ -52,450 +31,394 @@ fun MainScreen(
     onSectionChange: (MainSection) -> Unit,
     selectedServerId: String,
     onServerSelected: (String) -> Unit,
-    selectedChannel: String,
+    selectedChannelId: String,
     onChannelSelected: (String) -> Unit,
     unreadCounts: Map<String, Int>,
-    backendConnected: Boolean,
-    backendError: String?,
-    composerAttachment: ComposerAttachment?,
-    onPickFromGallery: () -> Unit,
-    onPickFile: () -> Unit,
-    onTakePhoto: () -> Unit,
-    onClearComposerAttachment: () -> Unit,
-    settingsDisplayName: String,
-    settingsStatusText: String,
-    settingsPushEnabled: Boolean,
-    settingsVibrationEnabled: Boolean,
-    settingsCompactModeEnabled: Boolean,
-    settingsSavedAtLeastOnce: Boolean,
-    onSettingsDisplayNameChange: (String) -> Unit,
-    onSettingsStatusTextChange: (String) -> Unit,
-    onSettingsPushEnabledChange: (Boolean) -> Unit,
-    onSettingsVibrationEnabledChange: (Boolean) -> Unit,
-    onSettingsCompactModeEnabledChange: (Boolean) -> Unit,
-    onSaveSettings: () -> Unit,
-    roles: List<Role>,
-    onCreateServer: (String, String) -> Unit,
-    onUpdateSelectedServer: (String, String) -> Unit,
-    onDeleteSelectedServer: () -> Unit,
-    onCreateChannel: (String) -> Unit,
-    onRenameSelectedChannel: (String) -> Unit,
-    onDeleteSelectedChannel: () -> Unit,
-    onCreateRole: (String, String?, Int, RolePermissions) -> Unit,
-    onUpdateRole: (String, String, String?, Int?, RolePermissions?) -> Unit,
-    onDeleteRole: (String) -> Unit,
-    activeRoleId: String,
-    onSelectActiveRole: (String) -> Unit,
-    canManageServer: Boolean,
-    canManageChannels: Boolean,
-    canManageRoles: Boolean,
-    canManageMessages: Boolean,
     messages: List<Message>,
-    onSendMessage: (String) -> Unit
+    onSendMessage: (String) -> Unit,
+    onTyping: () -> Unit,
+    typingText: String?,
+    members: List<ApiMember>,
+    isLoading: Boolean,
+    onLogout: () -> Unit,
+    // Profile
+    displayName: String,
+    statusText: String,
+    bio: String,
+    avatarUrl: String,
+    onSaveProfile: () -> Unit,
+    onDisplayNameChange: (String) -> Unit,
+    onStatusTextChange: (String) -> Unit,
+    onBioChange: (String) -> Unit,
+    onAvatarUrlChange: (String) -> Unit,
+    roles: List<Role>,
+    canManageServer: Boolean,
+    onAssignRole: (String, String) -> Unit,
+    onRemoveRole: (String, String) -> Unit,
+    onCreateServer: (String) -> Unit,
+    onJoinServer: (String) -> Unit,
+    onCreateChannel: (String, String) -> Unit,
+    onDeleteChannel: (String) -> Unit,
+    onDeleteServer: () -> Unit,
+    // Preferences
+    compactMode: Boolean = false,
+    onToggleCompactMode: () -> Unit = {},
+    pushEnabled: Boolean = true,
+    onTogglePush: () -> Unit = {},
+    vibrationEnabled: Boolean = true,
+    onToggleVibration: () -> Unit = {}
 ) {
-    val selectedServer = servers.firstOrNull { it.id == selectedServerId } ?: servers.firstOrNull()
+    val selectedServer = servers.find { it.id == selectedServerId } ?: servers.firstOrNull()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    var showMembers by rememberSaveable { mutableStateOf(false) }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        gesturesEnabled = true,
-        drawerContent = {
-            ModalDrawerSheet(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(340.dp),
-                drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow
-            ) {
-                if (selectedServer != null) {
-                    SidebarDrawer(
-                        section = section,
-                        onSectionChange = {
-                            onSectionChange(it)
-                            scope.launch { drawerState.close() }
-                        },
-                        servers = servers,
-                        selectedServerId = selectedServerId,
-                        onServerSelected = {
-                            onServerSelected(it)
-                            onSectionChange(MainSection.Chat)
-                            scope.launch { drawerState.close() }
-                        },
-                        selectedServer = selectedServer,
-                        selectedChannel = selectedChannel,
-                        onChannelSelected = {
-                            onChannelSelected(it)
-                            onSectionChange(MainSection.Chat)
-                            scope.launch { drawerState.close() }
-                        },
-                        onCreateServer = onCreateServer,
-                        unreadCounts = unreadCounts,
-                        onClose = { scope.launch { drawerState.close() } }
-                    )
-                } else {
-                    Text(
-                        text = "Brak serwerów",
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        }
-    ) {
-        when (section) {
-            MainSection.Chat -> ChatPane(
-                modifier = Modifier.fillMaxSize(),
-                nickname = nickname,
-                serverName = selectedServer?.name ?: "Brak serwera",
-                selectedChannel = selectedChannel,
-                messages = messages,
-                onSendMessage = onSendMessage,
-                backendConnected = backendConnected,
-                backendError = backendError,
-                composerAttachment = composerAttachment,
-                onPickFromGallery = onPickFromGallery,
-                onPickFile = onPickFile,
-                onTakePhoto = onTakePhoto,
-                onClearComposerAttachment = onClearComposerAttachment,
-                compactMode = settingsCompactModeEnabled,
-                onOpenSidebar = { scope.launch { drawerState.open() } }
-            )
-
-            MainSection.Settings -> SettingsScreen(
-                modifier = Modifier.fillMaxSize(),
-                nickname = nickname,
-                displayName = settingsDisplayName,
-                statusText = settingsStatusText,
-                pushEnabled = settingsPushEnabled,
-                vibrationEnabled = settingsVibrationEnabled,
-                compactModeEnabled = settingsCompactModeEnabled,
-                savedAtLeastOnce = settingsSavedAtLeastOnce,
-                onDisplayNameChange = onSettingsDisplayNameChange,
-                onStatusTextChange = onSettingsStatusTextChange,
-                onPushEnabledChange = onSettingsPushEnabledChange,
-                onVibrationEnabledChange = onSettingsVibrationEnabledChange,
-                onCompactModeEnabledChange = onSettingsCompactModeEnabledChange,
-                onSaveSettings = onSaveSettings,
-                servers = servers,
-                selectedServerId = selectedServerId,
-                selectedChannel = selectedChannel,
-                onServerSelected = onServerSelected,
-                onChannelSelected = onChannelSelected,
-                roles = roles,
-                onCreateServer = onCreateServer,
-                onUpdateSelectedServer = onUpdateSelectedServer,
-                onDeleteSelectedServer = onDeleteSelectedServer,
-                onCreateChannel = onCreateChannel,
-                onRenameSelectedChannel = onRenameSelectedChannel,
-                onDeleteSelectedChannel = onDeleteSelectedChannel,
-                onCreateRole = onCreateRole,
-                onUpdateRole = onUpdateRole,
-                onDeleteRole = onDeleteRole,
-                activeRoleId = activeRoleId,
-                onSelectActiveRole = onSelectActiveRole,
-                canManageServer = canManageServer,
-                canManageChannels = canManageChannels,
-                canManageRoles = canManageRoles,
-                canManageMessages = canManageMessages,
-                onOpenSidebar = { scope.launch { drawerState.open() } }
-            )
-        }
-    }
-}
-
-@Composable
-private fun SidebarDrawer(
-    section: MainSection,
-    onSectionChange: (MainSection) -> Unit,
-    servers: List<Server>,
-    selectedServerId: String,
-    onServerSelected: (String) -> Unit,
-    selectedServer: Server,
-    selectedChannel: String,
-    onChannelSelected: (String) -> Unit,
-    onCreateServer: (String, String) -> Unit,
-    unreadCounts: Map<String, Int>,
-    onClose: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 8.dp, bottom = 10.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = onClose) {
-                Text(
-                    text = "←",
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-            Text(
-                text = "Accordance",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        HorizontalDivider()
-
-        Row(modifier = Modifier.weight(1f)) {
-            ServerRail(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(74.dp),
-                servers = servers,
-                selectedServerId = selectedServerId,
-                onServerSelected = onServerSelected,
-                onCreateServer = onCreateServer
-            )
-            ChannelSidebar(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                server = selectedServer,
-                selectedChannel = selectedChannel,
-                onChannelSelected = onChannelSelected,
-                unreadCounts = unreadCounts
-            )
-        }
-
-        HorizontalDivider()
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            DrawerAction(
-                modifier = Modifier.weight(1f),
-                label = "💬 Czat",
-                selected = section == MainSection.Chat,
-                onClick = { onSectionChange(MainSection.Chat) }
-            )
-            DrawerAction(
-                modifier = Modifier.weight(1f),
-                label = "⚙ Ustawienia",
-                selected = section == MainSection.Settings,
-                onClick = { onSectionChange(MainSection.Settings) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun DrawerAction(
-    modifier: Modifier = Modifier,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() },
-        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun ServerRail(
-    modifier: Modifier = Modifier,
-    servers: List<Server>,
-    selectedServerId: String,
-    onServerSelected: (String) -> Unit,
-    onCreateServer: (String, String) -> Unit
-) {
-    var showCreateServerDialog by rememberSaveable { mutableStateOf(false) }
-    var serverNameInput by rememberSaveable { mutableStateOf("") }
-    var serverIconInput by rememberSaveable { mutableStateOf("") }
-
-    Column(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-            .padding(top = 10.dp, bottom = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            items(servers, key = { it.id }) { server ->
-                val selected = server.id == selectedServerId
-                Surface(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .clickable { onServerSelected(server.id) },
-                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = CircleShape
+    Box(modifier = Modifier.fillMaxSize()) {
+        // --- BASE LAYER: Sidebar + Chat ---
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                ModalDrawerSheet(
+                    modifier = Modifier.fillMaxHeight().width(310.dp),
+                    drawerContainerColor = Color(0xFF2B2D31)
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = server.icon,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                    if (selectedServer != null) {
+                        DiscordSidebar(
+                            servers = servers,
+                            selectedServer = selectedServer,
+                            selectedChannelId = selectedChannelId,
+                            onServerSelected = { onServerSelected(it); onSectionChange(MainSection.Chat) },
+                            onChannelSelected = { 
+                                onChannelSelected(it)
+                                scope.launch { drawerState.close() }
+                                onSectionChange(MainSection.Chat)
+                            },
+                            onOpenProfileSettings = { 
+                                onSectionChange(MainSection.ProfileSettings)
+                                scope.launch { drawerState.close() }
+                            },
+                            onOpenServerSettings = { 
+                                onSectionChange(MainSection.ServerSettings)
+                                scope.launch { drawerState.close() }
+                            },
+                            onOpenChannelSettings = { cid ->
+                                onChannelSelected(cid)
+                                onSectionChange(MainSection.ChannelSettings)
+                                scope.launch { drawerState.close() }
+                            },
+                            userNickname = nickname,
+                            status = statusText,
+                            onCreateServer = onCreateServer,
+                            onJoinServer = onJoinServer
+                        )
+                    } else {
+                        EmptyServerSidebar(
+                            onCreateServer = onCreateServer,
+                            onJoinServer = onJoinServer,
+                            userNickname = nickname,
+                            status = statusText,
+                            onOpenSettings = { 
+                                onSectionChange(MainSection.ProfileSettings)
+                                scope.launch { drawerState.close() }
+                            }
                         )
                     }
                 }
             }
+        ) {
+            val chanName = selectedServer?.channels?.find { it.id == selectedChannelId }?.name ?: "kanał"
+            ChatPane(
+                modifier = Modifier.fillMaxSize(),
+                nickname = nickname,
+                serverName = selectedServer?.name ?: "Brak serwera",
+                selectedChannel = chanName,
+                selectedChannelId = selectedChannelId,
+                messages = messages,
+                onSendMessage = onSendMessage,
+                onTyping = onTyping,
+                typingText = typingText,
+                backendConnected = true,
+                backendError = null,
+                isLoading = isLoading,
+                composerAttachment = null,
+                onPickFromGallery = {}, onPickFile = {}, onTakePhoto = {}, onClearComposerAttachment = {},
+                compactMode = compactMode,
+                onOpenSidebar = { scope.launch { drawerState.open() } },
+                onOpenMembers = { showMembers = !showMembers }
+            )
         }
 
-        Spacer(modifier = Modifier.size(4.dp))
-        Surface(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .clickable { showCreateServerDialog = true },
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shape = CircleShape
+        // --- LAYER 1: Members List Overlay (Slide from right) ---
+        AnimatedVisibility(
+            visible = showMembers && selectedServer != null && section == MainSection.Chat,
+            enter = slideInHorizontally(initialOffsetX = { it }),
+            exit = slideOutHorizontally(targetOffsetX = { it }),
+            modifier = Modifier.align(Alignment.CenterEnd).zIndex(1f)
         ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            Surface(
+                modifier = Modifier.fillMaxHeight().width(280.dp),
+                color = Color(0xFF2B2D31),
+                shadowElevation = 8.dp
             ) {
-                Text(
-                    text = "+",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
+                DiscordMembersList(members = members, onClose = { showMembers = false })
+            }
+        }
+
+        // --- LAYER 2: Settings Overlay (Full-screen slide up) ---
+        AnimatedVisibility(
+            visible = section != MainSection.Chat,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.fillMaxSize().zIndex(2f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(Color(0xFF313338))) {
+                when (section) {
+                    MainSection.ProfileSettings -> ProfileSettingsScreen(
+                        displayName = displayName, statusText = statusText,
+                        bio = bio, avatarUrl = avatarUrl,
+                        onDisplayNameChange = onDisplayNameChange, onStatusTextChange = onStatusTextChange,
+                        onBioChange = onBioChange, onAvatarUrlChange = onAvatarUrlChange,
+                        onSaveSettings = onSaveProfile, isLoading = isLoading,
+                        onClose = { onSectionChange(MainSection.Chat) },
+                        onLogout = onLogout,
+                        compactMode = compactMode, onToggleCompactMode = onToggleCompactMode,
+                        pushEnabled = pushEnabled, onTogglePush = onTogglePush,
+                        vibrationEnabled = vibrationEnabled, onToggleVibration = onToggleVibration
+                    )
+
+                    MainSection.ServerSettings -> ServerSettingsScreen(
+                        server = selectedServer,
+                        roles = roles,
+                        members = members,
+                        canManageServer = canManageServer,
+                        onAssignRole = onAssignRole,
+                        onRemoveRole = onRemoveRole,
+                        onDeleteServer = onDeleteServer,
+                        isLoading = isLoading,
+                        onClose = { onSectionChange(MainSection.Chat) }
+                    )
+
+                    MainSection.ChannelSettings -> ChannelSettingsScreen(
+                        channel = selectedServer?.channels?.find { it.id == selectedChannelId },
+                        onDeleteChannel = { cid ->
+                            onDeleteChannel(cid)
+                            onSectionChange(MainSection.Chat)
+                        },
+                        isLoading = isLoading,
+                        onClose = { onSectionChange(MainSection.Chat) }
+                    )
+                    else -> {}
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyServerSidebar(
+    onCreateServer: (String) -> Unit,
+    onJoinServer: (String) -> Unit,
+    userNickname: String,
+    status: String,
+    onOpenSettings: () -> Unit
+) {
+    var showAddDialog by remember { mutableStateOf(false) }
+    var showJoinDialog by remember { mutableStateOf(false) }
+    var input by remember { mutableStateOf("") }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF2B2D31))) {
+        Column(
+            modifier = Modifier.weight(1f).padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("Witaj w Accordance", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+            Spacer(modifier = Modifier.height(32.dp))
+            Button(onClick = { showAddDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Stwórz serwer") }
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(onClick = { showJoinDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Dołącz do serwera") }
+        }
+
+        Surface(color = Color(0xFF232428), modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                AvatarBubble(userNickname, size = 32.dp)
+                Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                    Text(userNickname, color = Color.White, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(status, color = Color(0xFFB5BAC1), style = MaterialTheme.typography.labelSmall)
+                }
+                IconButton(onClick = onOpenSettings) { Text("⚙", color = Color.White) }
             }
         }
     }
 
-    if (showCreateServerDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateServerDialog = false },
+    if (showAddDialog) {
+        AlertDialog(onDismissRequest = { showAddDialog = false }, 
             title = { Text("Nowy serwer") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = serverNameInput,
-                        onValueChange = { serverNameInput = it },
-                        label = { Text("Nazwa serwera") },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = serverIconInput,
-                        onValueChange = { serverIconInput = it },
-                        label = { Text("Ikona (1 znak)") },
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onCreateServer(serverNameInput, serverIconInput.take(1))
-                        serverNameInput = ""
-                        serverIconInput = ""
-                        showCreateServerDialog = false
-                    },
-                    enabled = serverNameInput.isNotBlank()
-                ) {
-                    Text("Utwórz")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateServerDialog = false }) {
-                    Text("Anuluj")
-                }
-            }
+            text = { OutlinedTextField(value = input, onValueChange = { input = it }, label = { Text("Nazwa serwera") }) },
+            confirmButton = { Button(onClick = { onCreateServer(input); showAddDialog = false; input = "" }) { Text("Stwórz") } }
+        )
+    }
+    if (showJoinDialog) {
+        AlertDialog(onDismissRequest = { showJoinDialog = false }, 
+            title = { Text("Dołącz do serwera") },
+            text = { OutlinedTextField(value = input, onValueChange = { input = it }, label = { Text("Kod zaproszenia") }) },
+            confirmButton = { Button(onClick = { onJoinServer(input); showJoinDialog = false; input = "" }) { Text("Dołącz") } }
         )
     }
 }
 
 @Composable
-private fun ChannelSidebar(
-    modifier: Modifier = Modifier,
-    server: Server,
-    selectedChannel: String,
+private fun DiscordSidebar(
+    servers: List<Server>,
+    selectedServer: Server,
+    selectedChannelId: String,
+    onServerSelected: (String) -> Unit,
     onChannelSelected: (String) -> Unit,
-    unreadCounts: Map<String, Int>
+    onOpenProfileSettings: () -> Unit,
+    onOpenServerSettings: () -> Unit,
+    onOpenChannelSettings: (String) -> Unit,
+    userNickname: String,
+    status: String,
+    onCreateServer: (String) -> Unit,
+    onJoinServer: (String) -> Unit
 ) {
-    Surface(
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.surfaceContainerLow
-    ) {
+    var showAddServerDialog by remember { mutableStateOf(false) }
+    var showJoinServerDialog by remember { mutableStateOf(false) }
+    var serverNameInput by remember { mutableStateOf("") }
+    var inviteCodeInput by remember { mutableStateOf("") }
+
+    Row(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 12.dp, start = 10.dp, end = 10.dp, bottom = 10.dp),
+            modifier = Modifier.width(72.dp).fillMaxHeight().background(Color(0xFF1E1F22)).padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = server.name,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-            HorizontalDivider()
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(server.channels, key = { it }) { channel ->
-                    val selected = channel == selectedChannel
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { onChannelSelected(channel) },
-                        color = if (selected) {
-                            MaterialTheme.colorScheme.surfaceContainerHighest
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainerLow
-                        }
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = channel,
-                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                            val unread = unreadCounts[conversationKey(server.id, channel)] ?: 0
-                            if (!selected && unread > 0) {
-                                Surface(
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = MaterialTheme.colorScheme.primary
-                                ) {
-                                    Text(
-                                        text = unread.toString(),
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        }
+            servers.forEach { s ->
+                ServerIcon(s.icon, s.id == selectedServer.id) { onServerSelected(s.id) }
+            }
+            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF313338)).clickable { showAddServerDialog = true }, contentAlignment = Alignment.Center) {
+                Text("+", color = Color(0xFF23A559), fontSize = 24.sp)
+            }
+            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF313338)).clickable { showJoinServerDialog = true }, contentAlignment = Alignment.Center) {
+                Text("🔗", color = Color(0xFF5865F2), fontSize = 20.sp)
+            }
+        }
+
+        Column(modifier = Modifier.weight(1f).fillMaxHeight().background(Color(0xFF2B2D31))) {
+            Column(modifier = Modifier.clickable { onOpenServerSettings() }.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(selectedServer.name, modifier = Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("⚙", color = Color.Gray, fontSize = 14.sp)
+                }
+                Text("KOD: ${selectedServer.inviteCode ?: "---"}", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+            }
+            HorizontalDivider(color = Color(0xFF1F2124))
+
+            val grouped = selectedServer.channels.groupBy { it.category ?: "PODSTAWOWE" }
+            LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                grouped.forEach { (cat, chans) ->
+                    item {
+                        Text(cat.uppercase(), modifier = Modifier.padding(top = 16.dp, start = 8.dp, bottom = 4.dp), 
+                            color = Color(0xFF949BA4), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                    items(chans) { chan ->
+                        ChannelItem(chan.name, chan.id == selectedChannelId, onOpenSettings = { onOpenChannelSettings(chan.id) }) { onChannelSelected(chan.id) }
+                    }
+                }
+            }
+
+            Surface(color = Color(0xFF232428), modifier = Modifier.fillMaxWidth()) {
+                Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AvatarBubble(userNickname, size = 32.dp)
+                    Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                        Text(userNickname, color = Color.White, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        Text(status, color = Color(0xFFB5BAC1), style = MaterialTheme.typography.labelSmall)
+                    }
+                    IconButton(onClick = onOpenProfileSettings) { Text("⚙", color = Color.White) }
+                }
+            }
+        }
+    }
+
+    if (showAddServerDialog) {
+        AlertDialog(onDismissRequest = { showAddServerDialog = false }, 
+            title = { Text("Stwórz serwer") },
+            text = { OutlinedTextField(value = serverNameInput, onValueChange = { serverNameInput = it }, label = { Text("Nazwa serwera") }) },
+            confirmButton = { Button(onClick = { onCreateServer(serverNameInput); showAddServerDialog = false; serverNameInput = "" }) { Text("Stwórz") } }
+        )
+    }
+    if (showJoinServerDialog) {
+        AlertDialog(onDismissRequest = { showJoinServerDialog = false }, 
+            title = { Text("Dołącz do serwera") },
+            text = { OutlinedTextField(value = inviteCodeInput, onValueChange = { inviteCodeInput = it }, label = { Text("Kod zaproszenia") }) },
+            confirmButton = { Button(onClick = { onJoinServer(inviteCodeInput); showJoinServerDialog = false; inviteCodeInput = "" }) { Text("Dołącz") } }
+        )
+    }
+}
+
+@Composable
+private fun ServerIcon(icon: String, isSel: Boolean, onClick: () -> Unit) {
+    Box(contentAlignment = Alignment.CenterStart) {
+        if (isSel) Box(modifier = Modifier.width(4.dp).height(32.dp).clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp)).background(Color.White))
+        Box(
+            modifier = Modifier.padding(start = 12.dp).size(48.dp)
+                .clip(if (isSel) RoundedCornerShape(16.dp) else CircleShape)
+                .background(if (isSel) Color(0xFF5865F2) else Color(0xFF313338))
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) { Text(icon, color = Color.White, fontWeight = FontWeight.Bold) }
+    }
+}
+
+@Composable
+private fun ChannelItem(name: String, isSel: Boolean, onOpenSettings: () -> Unit, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(34.dp).padding(vertical = 1.dp).clip(RoundedCornerShape(4.dp)).clickable { onClick() },
+        color = if (isSel) Color(0xFF3F4248) else Color.Transparent
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+            Text("#", color = Color(0xFF80848E), fontSize = 20.sp)
+            Text(name, modifier = Modifier.padding(start = 8.dp).weight(1f), color = if (isSel) Color.White else Color(0xFF80848E), fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium)
+            if (isSel) {
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(24.dp)) {
+                    Text("⚙", color = Color.Gray, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiscordMembersList(members: List<ApiMember>, onClose: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("UŻYTKOWNICY — ${members.size}", modifier = Modifier.weight(1f), color = Color(0xFF949BA4), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            IconButton(onClick = onClose) {
+                Text("✕", color = Color.White)
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(members) { m ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AvatarBubble(m.username, size = 32.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(m.nickname ?: m.username, color = if (m.isOnline) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                    if (m.isOnline) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF23A559)))
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AvatarBubble(author: String, size: androidx.compose.ui.unit.Dp = 32.dp) {
+    val colors = listOf(Color(0xFFE91E63), Color(0xFF9C27B0), Color(0xFF2196F3), Color(0xFF4CAF50))
+    val bgColor = colors[author.hashCode().let { if (it < 0) -it else it } % colors.size]
+    Box(modifier = Modifier.size(size).clip(CircleShape).background(bgColor), contentAlignment = Alignment.Center) {
+        Text(author.firstOrNull()?.uppercase() ?: "?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.4).sp)
     }
 }

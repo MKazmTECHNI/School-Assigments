@@ -1,815 +1,296 @@
 import os
-import re
 import uuid
-from datetime import datetime
+import jwt
+import re
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, delete, func, inspect, select, text
-from sqlalchemy.exc import OperationalError
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Table, Column, create_engine, select, func, delete
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
+from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-load_dotenv()
-
-_DATABASE_URL_FROM_ENV = os.getenv("DATABASE_URL")
-DATABASE_URL = _DATABASE_URL_FROM_ENV or "mysql+pymysql://root:root@127.0.0.1:3306/accordance"
-SQLITE_FALLBACK_URL = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'accordance.db')}"
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads"))
+# --- CONFIGURATION ---
+SECRET_KEY = os.getenv("SECRET_KEY", "accordance-discord-master-key-2025")
+DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///accordance.db"
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 
 class Base(DeclarativeBase):
     pass
 
+# Many-to-Many: Membership <-> Roles
+membership_roles = Table(
+    "membership_roles",
+    Base.metadata,
+    Column("membership_id", ForeignKey("memberships.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+class UserModel(Base):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(100))
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(255))
+    bio: Mapped[Optional[str]] = mapped_column(String(255))
+    status_text: Mapped[str] = mapped_column(String(50), default="Online")
+    is_online: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    memberships: Mapped[list["MembershipModel"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 class ServerModel(Base):
     __tablename__ = "servers"
-
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     icon: Mapped[str] = mapped_column(String(10), nullable=False)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    invite_code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
 
-    channels: Mapped[list["ChannelModel"]] = relationship(
-        back_populates="server",
-        cascade="all, delete-orphan",
-    )
-    roles: Mapped[list["RoleModel"]] = relationship(
-        back_populates="server",
-        cascade="all, delete-orphan",
-    )
+    channels: Mapped[list["ChannelModel"]] = relationship(back_populates="server", cascade="all, delete-orphan")
+    roles: Mapped[list["RoleModel"]] = relationship(back_populates="server", cascade="all, delete-orphan")
+    members: Mapped[list["MembershipModel"]] = relationship(back_populates="server", cascade="all, delete-orphan")
 
+class MembershipModel(Base):
+    __tablename__ = "memberships"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("servers.id"), index=True)
+    nickname: Mapped[Optional[str]] = mapped_column(String(100))
+
+    user: Mapped[UserModel] = relationship(back_populates="memberships")
+    server: Mapped[ServerModel] = relationship(back_populates="members")
+    roles: Mapped[list["RoleModel"]] = relationship(secondary=membership_roles)
 
 class ChannelModel(Base):
     __tablename__ = "channels"
-
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     server_id: Mapped[str] = mapped_column(ForeignKey("servers.id"), index=True)
+    topic: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    category: Mapped[str] = mapped_column(String(100), default="KANAŁY TEKSTOWE")
+    slowmode_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    is_nsfw: Mapped[bool] = mapped_column(Boolean, default=False)
 
     server: Mapped[ServerModel] = relationship(back_populates="channels")
 
-
 class RoleModel(Base):
     __tablename__ = "roles"
-
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     server_id: Mapped[str] = mapped_column(ForeignKey("servers.id"), index=True)
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    manage_server: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    manage_channels: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    manage_roles: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    manage_messages: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    manage_server: Mapped[bool] = mapped_column(Boolean, default=False)
+    manage_channels: Mapped[bool] = mapped_column(Boolean, default=False)
+    manage_roles: Mapped[bool] = mapped_column(Boolean, default=False)
+    manage_messages: Mapped[bool] = mapped_column(Boolean, default=True)
 
     server: Mapped[ServerModel] = relationship(back_populates="roles")
 
-
 class MessageModel(Base):
     __tablename__ = "messages"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     server_id: Mapped[str] = mapped_column(String(50), index=True)
     channel_id: Mapped[str] = mapped_column(String(50), index=True)
-    author: Mapped[str] = mapped_column(String(80), nullable=False)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    author_name: Mapped[str] = mapped_column(String(80))
     text: Mapped[str] = mapped_column(Text, nullable=False)
     time: Mapped[str] = mapped_column(String(10), nullable=False)
-    attachment_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    attachment_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    attachment_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
-
-def _create_engine_with_fallback():
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-    try:
-        with engine.connect() as conn:
-            conn.execute(select(1))
-        return engine
-    except OperationalError:
-        if _DATABASE_URL_FROM_ENV:
-            raise
-        print("[backend] MySQL is unavailable. Falling back to local SQLite database.")
-        fallback_engine = create_engine(SQLITE_FALLBACK_URL, pool_pre_ping=True)
-        with fallback_engine.connect() as conn:
-            conn.execute(select(1))
-        return fallback_engine
-
-
-engine = _create_engine_with_fallback()
+# Initialize DB
+engine = create_engine(DATABASE_URL)
 Base.metadata.create_all(engine)
-
-
-def _ensure_role_permission_columns() -> None:
-    with engine.begin() as conn:
-        inspector = inspect(conn)
-        existing_columns = {col["name"] for col in inspector.get_columns("roles")}
-        missing_columns = [
-            ("manage_server", "BOOLEAN NOT NULL DEFAULT 0"),
-            ("manage_channels", "BOOLEAN NOT NULL DEFAULT 0"),
-            ("manage_roles", "BOOLEAN NOT NULL DEFAULT 0"),
-            ("manage_messages", "BOOLEAN NOT NULL DEFAULT 0"),
-        ]
-        for column_name, column_type in missing_columns:
-            if column_name not in existing_columns:
-                conn.execute(text(f"ALTER TABLE roles ADD COLUMN {column_name} {column_type}"))
-
-
-_ensure_role_permission_columns()
 
 app = Flask(__name__)
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
+# --- JWT HELPERS ---
+def create_token(user_id):
+    exp = datetime.now(timezone.utc) + timedelta(days=7)
+    payload = {'exp': exp, 'iat': datetime.now(timezone.utc), 'sub': user_id}
+    return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
 
-def _slugify(text: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
-    return normalized or "item"
-
-
-def _truncate(value: str, max_len: int) -> str:
-    return value[:max_len] if len(value) > max_len else value
-
-
-def _next_unique_id(db: Session, model, base_id: str, max_len: int = 50) -> str:
-    candidate = _truncate(base_id, max_len)
-    suffix = 2
-    while db.scalar(select(model.id).where(model.id == candidate)) is not None:
-        postfix = f"-{suffix}"
-        candidate = _truncate(base_id, max_len - len(postfix)) + postfix
-        suffix += 1
-    return candidate
-
-
-def _server_exists(db: Session, server_id: str) -> bool:
-    return db.scalar(select(ServerModel.id).where(ServerModel.id == server_id)) is not None
-
-
-def _channel_exists(db: Session, server_id: str, channel_id: str) -> bool:
-    return (
-        db.scalar(
-            select(ChannelModel.id).where(
-                ChannelModel.server_id == server_id,
-                ChannelModel.id == channel_id,
-            )
-        )
-        is not None
-    )
-
-
-def _role_exists(db: Session, server_id: str, role_id: str) -> bool:
-    return (
-        db.scalar(
-            select(RoleModel.id).where(
-                RoleModel.server_id == server_id,
-                RoleModel.id == role_id,
-            )
-        )
-        is not None
-    )
-
-
-PERM_MANAGE_SERVER = "manage_server"
-PERM_MANAGE_CHANNELS = "manage_channels"
-PERM_MANAGE_ROLES = "manage_roles"
-PERM_MANAGE_MESSAGES = "manage_messages"
-
-
-def _parse_permissions(payload_permissions: Optional[dict]) -> dict[str, bool]:
-    payload_permissions = payload_permissions or {}
-    return {
-        PERM_MANAGE_SERVER: bool(payload_permissions.get("manageServer", False)),
-        PERM_MANAGE_CHANNELS: bool(payload_permissions.get("manageChannels", False)),
-        PERM_MANAGE_ROLES: bool(payload_permissions.get("manageRoles", False)),
-        PERM_MANAGE_MESSAGES: bool(payload_permissions.get("manageMessages", False)),
-    }
-
-
-def _role_permissions_response(role: RoleModel) -> dict[str, bool]:
-    return {
-        "manageServer": bool(role.manage_server),
-        "manageChannels": bool(role.manage_channels),
-        "manageRoles": bool(role.manage_roles),
-        "manageMessages": bool(role.manage_messages),
-    }
-
-
-def _resolve_actor_role(db: Session, server_id: str, actor_role_id: Optional[str]) -> Optional[RoleModel]:
-    if not actor_role_id:
-        return None
-    return db.scalar(
-        select(RoleModel).where(
-            RoleModel.server_id == server_id,
-            RoleModel.id == actor_role_id,
-        )
-    )
-
-
-def _require_permission_or_403(
-    db: Session,
-    server_id: str,
-    permission: str,
-    actor_role_id: Optional[str],
-):
-    actor_role = _resolve_actor_role(db, server_id, actor_role_id)
-    if actor_role is None:
-        return None
-    if bool(getattr(actor_role, permission, False)):
-        return None
-    return jsonify({"detail": "Permission denied"}), 403
-
-
-def _seed_initial_data() -> None:
-    with Session(engine) as db:
-        has_servers = db.scalar(select(func.count()).select_from(ServerModel))
-        if not has_servers or has_servers == 0:
-            db.add_all(
-                [
-                    ServerModel(id="general", name="General", icon="G"),
-                    ServerModel(id="mobile-dev", name="Mobile Dev", icon="M"),
-                    ServerModel(id="szkola", name="Szkoła", icon="S"),
-                ]
-            )
-
-            db.add_all(
-                [
-                    ChannelModel(id="ogolny", name="#ogólny", server_id="general"),
-                    ChannelModel(id="nauka", name="#nauka", server_id="general"),
-                    ChannelModel(id="offtopic", name="#offtopic", server_id="general"),
-                    ChannelModel(id="android", name="#android", server_id="mobile-dev"),
-                    ChannelModel(id="ios", name="#ios", server_id="mobile-dev"),
-                    ChannelModel(id="react-native", name="#react-native", server_id="mobile-dev"),
-                    ChannelModel(id="projekt", name="#projekt", server_id="szkola"),
-                    ChannelModel(id="terminy", name="#terminy", server_id="szkola"),
-                    ChannelModel(id="pomoc", name="#pomoc", server_id="szkola"),
-                ]
-            )
-
-            db.add_all(
-                [
-                    MessageModel(server_id="general", channel_id="ogolny", author="Ola", text="Ej, kto ma plan na wieczór?", time="17:05"),
-                    MessageModel(server_id="general", channel_id="ogolny", author="Bartek", text="Ja klasycznie: serial + kebs 😎", time="17:06"),
-                    MessageModel(server_id="general", channel_id="ogolny", author="Natalia", text="Jak coś to po 19 jestem wolna", time="17:10"),
-                    MessageModel(server_id="general", channel_id="ogolny", author="Kuba", text="to lecimy na boisko", time="17:11"),
-                    MessageModel(server_id="general", channel_id="nauka", author="Ola", text="Czy tylko ja się uczę lepiej w nocy?", time="18:11"),
-                    MessageModel(server_id="general", channel_id="nauka", author="Bartek", text="+1, po 22 mózg dopiero startuje", time="18:12"),
-                    MessageModel(server_id="general", channel_id="nauka", author="Natalia", text="Pomodoro 25/5 u mnie działa", time="18:15"),
-                    MessageModel(server_id="general", channel_id="offtopic", author="Kuba", text="Wrzucam mema dnia", time="19:21"),
-                    MessageModel(server_id="general", channel_id="offtopic", author="Ola", text="to fake, takie rzeczy nie istnieją", time="19:22"),
-                    MessageModel(server_id="general", channel_id="offtopic", author="Bartek", text="ten kanał to złoto", time="19:24"),
-                    MessageModel(server_id="mobile-dev", channel_id="android", author="Natalia", text="Najskuteczniejszy fix ever", time="16:48"),
-                    MessageModel(server_id="mobile-dev", channel_id="android", author="Bartek", text="emulator po cold boocie żyje", time="16:50"),
-                    MessageModel(server_id="mobile-dev", channel_id="android", author="Ola", text="adb też dziś współpracuje", time="16:51"),
-                    MessageModel(server_id="mobile-dev", channel_id="ios", author="Kuba", text="Ktoś faktycznie lubi Xcode?", time="15:30"),
-                    MessageModel(server_id="mobile-dev", channel_id="ios", author="Ola", text="jak się nie crashuje to lubię", time="15:31"),
-                    MessageModel(server_id="mobile-dev", channel_id="react-native", author="Natalia", text="RN hot reload to magia", time="14:12"),
-                    MessageModel(server_id="mobile-dev", channel_id="react-native", author="Kuba", text="najlepsza część tego stacku", time="14:13"),
-                    MessageModel(server_id="szkola", channel_id="projekt", author="Natalia", text="Kto widział moją bluzę?", time="13:40"),
-                    MessageModel(server_id="szkola", channel_id="projekt", author="Ola", text="została chyba w sali obok", time="13:42"),
-                    MessageModel(server_id="szkola", channel_id="terminy", author="Kuba", text="Jutro pierwsza lekcja odwołana?", time="11:02"),
-                    MessageModel(server_id="szkola", channel_id="terminy", author="Natalia", text="update dam wieczorem", time="11:07"),
-                    MessageModel(server_id="szkola", channel_id="pomoc", author="Ola", text="Jak usunąć plamę po kawie?", time="10:10"),
-                    MessageModel(server_id="szkola", channel_id="pomoc", author="Bartek", text="chusteczki i delikatnie wodą", time="10:12"),
-                ]
-            )
-
-        existing_server_ids = db.scalars(select(ServerModel.id)).all()
-        for server_id in existing_server_ids:
-            has_roles = db.scalar(
-                select(func.count())
-                .select_from(RoleModel)
-                .where(RoleModel.server_id == server_id)
-            )
-            if has_roles and has_roles > 0:
-                existing_roles = db.scalars(
-                    select(RoleModel).where(RoleModel.server_id == server_id)
-                ).all()
-                for role in existing_roles:
-                    lower_name = role.name.strip().lower()
-                    if lower_name == "owner":
-                        role.manage_server = True
-                        role.manage_channels = True
-                        role.manage_roles = True
-                        role.manage_messages = True
-                    elif lower_name == "member":
-                        role.manage_messages = True
-                continue
-            db.add_all(
-                [
-                    RoleModel(
-                        id=_next_unique_id(db, RoleModel, f"{server_id}-owner"),
-                        server_id=server_id,
-                        name="Owner",
-                        color="#f59e0b",
-                        position=100,
-                        manage_server=True,
-                        manage_channels=True,
-                        manage_roles=True,
-                        manage_messages=True,
-                    ),
-                    RoleModel(
-                        id=_next_unique_id(db, RoleModel, f"{server_id}-member"),
-                        server_id=server_id,
-                        name="Member",
-                        color="#60a5fa",
-                        position=10,
-                        manage_server=False,
-                        manage_channels=False,
-                        manage_roles=False,
-                        manage_messages=True,
-                    ),
-                ]
-            )
-
-        db.commit()
-
-
-_seed_initial_data()
-
-
-@app.get("/health")
-def health():
+def decode_token(token):
     try:
-        with Session(engine) as db:
-            db.execute(select(1))
-        return jsonify({"status": "ok", "db": "connected"})
-    except Exception as ex:
-        return jsonify({"status": "error", "db": str(ex)}), 500
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return payload['sub']
+    except Exception as e:
+        print(f"Token decode error: {e}")
+        return None
 
+def token_required(f):
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header:
+            print("Missing Authorization header")
+            return jsonify({"detail": "Missing token"}), 401
 
-@app.get("/servers")
-def get_servers():
+        # Robust token extraction
+        token = auth_header
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+
+        user_id = decode_token(token)
+        if not user_id:
+            print(f"Invalid token: '{token[:10]}...'")
+            return jsonify({"detail": "Unauthorized"}), 401
+
+        kwargs['current_user_id'] = user_id
+        return f(*args, **kwargs)
+    decorated.__name__ = f.__name__
+    return decorated
+
+# --- AUTH ROUTES ---
+@app.route("/auth/register", methods=['POST'])
+def api_register():
+    payload = request.json
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
+    if len(username) < 3: return jsonify({"detail": "Username too short"}), 400
+
     with Session(engine) as db:
-        servers = db.scalars(select(ServerModel).order_by(ServerModel.name.asc())).all()
-        return jsonify([{"id": s.id, "name": s.name, "icon": s.icon} for s in servers])
-
-
-@app.post("/servers")
-def create_server():
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("name", "")).strip()
-    icon = str(payload.get("icon", "")).strip()
-    requested_id = str(payload.get("id", "")).strip()
-
-    if not name:
-        return jsonify({"detail": "name is required"}), 400
-
-    if not icon:
-        icon = name[:1].upper() if name else "S"
-    icon = _truncate(icon, 10)
-
-    with Session(engine) as db:
-        base_id = requested_id or _slugify(name)
-        server_id = _next_unique_id(db, ServerModel, _truncate(base_id, 50))
-        row = ServerModel(id=server_id, name=_truncate(name, 100), icon=icon)
-        db.add(row)
-        db.add_all(
-            [
-                RoleModel(
-                    id=_next_unique_id(db, RoleModel, f"{server_id}-owner"),
-                    server_id=server_id,
-                    name="Owner",
-                    color="#f59e0b",
-                    position=100,
-                    manage_server=True,
-                    manage_channels=True,
-                    manage_roles=True,
-                    manage_messages=True,
-                ),
-                RoleModel(
-                    id=_next_unique_id(db, RoleModel, f"{server_id}-member"),
-                    server_id=server_id,
-                    name="Member",
-                    color="#60a5fa",
-                    position=10,
-                    manage_messages=True,
-                ),
-            ]
-        )
+        if db.scalar(select(UserModel).where(UserModel.username == username)):
+            return jsonify({"detail": "Username taken"}), 400
+        uid = str(uuid.uuid4())
+        user = UserModel(id=uid, username=username, password_hash=generate_password_hash(password), display_name=username)
+        db.add(user)
         db.commit()
-        return jsonify({"id": row.id, "name": row.name, "icon": row.icon}), 201
+        return jsonify({"token": create_token(uid), "user": {"id": uid, "username": username}})
 
-
-@app.patch("/servers/<server_id>")
-def update_server(server_id: str):
-    payload = request.get_json(silent=True) or {}
-    name = payload.get("name")
-    icon = payload.get("icon")
-    actor_role_id = request.args.get("actor_role_id")
-
+@app.route("/auth/login", methods=['POST'])
+def api_login():
+    payload = request.json
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
     with Session(engine) as db:
-        row = db.get(ServerModel, server_id)
-        if row is None:
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_SERVER, actor_role_id)
-        if denied is not None:
-            return denied
-
-        if name is not None:
-            name_value = str(name).strip()
-            if not name_value:
-                return jsonify({"detail": "name cannot be empty"}), 400
-            row.name = _truncate(name_value, 100)
-
-        if icon is not None:
-            icon_value = str(icon).strip()
-            if not icon_value:
-                return jsonify({"detail": "icon cannot be empty"}), 400
-            row.icon = _truncate(icon_value, 10)
-
-        db.commit()
-        return jsonify({"id": row.id, "name": row.name, "icon": row.icon})
-
-
-@app.delete("/servers/<server_id>")
-def delete_server(server_id: str):
-    actor_role_id = request.args.get("actor_role_id")
-    with Session(engine) as db:
-        row = db.get(ServerModel, server_id)
-        if row is None:
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_SERVER, actor_role_id)
-        if denied is not None:
-            return denied
-
-        db.execute(delete(MessageModel).where(MessageModel.server_id == server_id))
-        db.delete(row)
-        db.commit()
-        return "", 204
-
-
-@app.get("/servers/<server_id>/channels")
-def get_channels(server_id: str):
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        channels = db.scalars(
-            select(ChannelModel)
-            .where(ChannelModel.server_id == server_id)
-            .order_by(ChannelModel.name.asc())
-        ).all()
-        return jsonify([{"id": c.id, "name": c.name} for c in channels])
-
-
-@app.post("/servers/<server_id>/channels")
-def create_channel(server_id: str):
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("name", "")).strip()
-    requested_id = str(payload.get("id", "")).strip()
-    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
-
-    if not name:
-        return jsonify({"detail": "name is required"}), 400
-
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_CHANNELS, actor_role_id)
-        if denied is not None:
-            return denied
-
-        base_name = name[1:] if name.startswith("#") else name
-        base_id = requested_id or _slugify(base_name)
-        channel_id = _next_unique_id(db, ChannelModel, _truncate(base_id, 50))
-        row = ChannelModel(
-            id=channel_id,
-            server_id=server_id,
-            name=_truncate(name, 100),
-        )
-        db.add(row)
-        db.commit()
-        return jsonify({"id": row.id, "name": row.name}), 201
-
-
-@app.patch("/servers/<server_id>/channels/<channel_id>")
-def update_channel(server_id: str, channel_id: str):
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("name", "")).strip()
-    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
-    if not name:
-        return jsonify({"detail": "name is required"}), 400
-
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_CHANNELS, actor_role_id)
-        if denied is not None:
-            return denied
-        row = db.scalar(
-            select(ChannelModel).where(
-                ChannelModel.server_id == server_id,
-                ChannelModel.id == channel_id,
-            )
-        )
-        if row is None:
-            return jsonify({"detail": "Channel not found"}), 404
-
-        row.name = _truncate(name, 100)
-        db.commit()
-        return jsonify({"id": row.id, "name": row.name})
-
-
-@app.delete("/servers/<server_id>/channels/<channel_id>")
-def delete_channel(server_id: str, channel_id: str):
-    actor_role_id = request.args.get("actor_role_id")
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_CHANNELS, actor_role_id)
-        if denied is not None:
-            return denied
-        row = db.scalar(
-            select(ChannelModel).where(
-                ChannelModel.server_id == server_id,
-                ChannelModel.id == channel_id,
-            )
-        )
-        if row is None:
-            return jsonify({"detail": "Channel not found"}), 404
-
-        db.execute(
-            delete(MessageModel).where(
-                MessageModel.server_id == server_id,
-                MessageModel.channel_id == channel_id,
-            )
-        )
-        db.delete(row)
-        db.commit()
-        return "", 204
-
-
-@app.get("/servers/<server_id>/roles")
-def get_roles(server_id: str):
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-
-        roles = db.scalars(
-            select(RoleModel)
-            .where(RoleModel.server_id == server_id)
-            .order_by(RoleModel.position.desc(), RoleModel.name.asc())
-        ).all()
-        return jsonify(
-            [
-                {
-                    "id": r.id,
-                    "name": r.name,
-                    "color": r.color,
-                    "position": r.position,
-                    "permissions": _role_permissions_response(r),
-                }
-                for r in roles
-            ]
-        )
-
-
-@app.post("/servers/<server_id>/roles")
-def create_role(server_id: str):
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("name", "")).strip()
-    color = str(payload.get("color", "")).strip() or None
-    requested_id = str(payload.get("id", "")).strip()
-    position_raw = payload.get("position", 0)
-    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
-    permissions = _parse_permissions(payload.get("permissions"))
-
-    if not name:
-        return jsonify({"detail": "name is required"}), 400
-
-    try:
-        position = int(position_raw)
-    except (TypeError, ValueError):
-        return jsonify({"detail": "position must be a number"}), 400
-
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_ROLES, actor_role_id)
-        if denied is not None:
-            return denied
-
-        base_id = requested_id or f"{server_id}-{_slugify(name)}"
-        role_id = _next_unique_id(db, RoleModel, _truncate(base_id, 50))
-        row = RoleModel(
-            id=role_id,
-            server_id=server_id,
-            name=_truncate(name, 60),
-            color=_truncate(color, 20) if color else None,
-            position=position,
-            manage_server=permissions[PERM_MANAGE_SERVER],
-            manage_channels=permissions[PERM_MANAGE_CHANNELS],
-            manage_roles=permissions[PERM_MANAGE_ROLES],
-            manage_messages=permissions[PERM_MANAGE_MESSAGES],
-        )
-        db.add(row)
-        db.commit()
-        return (
-            jsonify(
-                {
-                    "id": row.id,
-                    "name": row.name,
-                    "color": row.color,
-                    "position": row.position,
-                    "permissions": _role_permissions_response(row),
-                }
-            ),
-            201,
-        )
-
-
-@app.patch("/servers/<server_id>/roles/<role_id>")
-def update_role(server_id: str, role_id: str):
-    payload = request.get_json(silent=True) or {}
-    name = payload.get("name")
-    color = payload.get("color")
-    position_raw = payload.get("position")
-    actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
-    permissions_payload = payload.get("permissions")
-
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_ROLES, actor_role_id)
-        if denied is not None:
-            return denied
-
-        row = db.scalar(
-            select(RoleModel).where(
-                RoleModel.server_id == server_id,
-                RoleModel.id == role_id,
-            )
-        )
-        if row is None:
-            return jsonify({"detail": "Role not found"}), 404
-
-        if name is not None:
-            name_value = str(name).strip()
-            if not name_value:
-                return jsonify({"detail": "name cannot be empty"}), 400
-            row.name = _truncate(name_value, 60)
-
-        if color is not None:
-            color_value = str(color).strip()
-            row.color = _truncate(color_value, 20) if color_value else None
-
-        if position_raw is not None:
-            try:
-                row.position = int(position_raw)
-            except (TypeError, ValueError):
-                return jsonify({"detail": "position must be a number"}), 400
-
-        if permissions_payload is not None:
-            permissions = _parse_permissions(permissions_payload)
-            row.manage_server = permissions[PERM_MANAGE_SERVER]
-            row.manage_channels = permissions[PERM_MANAGE_CHANNELS]
-            row.manage_roles = permissions[PERM_MANAGE_ROLES]
-            row.manage_messages = permissions[PERM_MANAGE_MESSAGES]
-
-        db.commit()
-        return jsonify(
-            {
-                "id": row.id,
-                "name": row.name,
-                "color": row.color,
-                "position": row.position,
-                "permissions": _role_permissions_response(row),
+        user = db.scalar(select(UserModel).where(UserModel.username == username))
+        if not user or not check_password_hash(user.password_hash, password):
+            return jsonify({"detail": "Invalid credentials"}), 401
+        return jsonify({
+            "token": create_token(user.id),
+            "user": {
+                "id": user.id, "username": user.username, "displayName": user.display_name,
+                "avatarUrl": user.avatar_url, "statusText": user.status_text, "bio": user.bio
             }
-        )
+        })
 
-
-@app.delete("/servers/<server_id>/roles/<role_id>")
-def delete_role(server_id: str, role_id: str):
-    actor_role_id = request.args.get("actor_role_id")
+# --- SERVER ROUTES ---
+@app.route("/servers", methods=['GET'])
+@token_required
+def api_get_servers(current_user_id):
     with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_ROLES, actor_role_id)
-        if denied is not None:
-            return denied
-        if not _role_exists(db, server_id, role_id):
-            return jsonify({"detail": "Role not found"}), 404
+        mems = db.scalars(select(MembershipModel).where(MembershipModel.user_id == current_user_id)).all()
+        sids = [m.server_id for m in mems]
+        servers = db.scalars(select(ServerModel).where(ServerModel.id.in_(sids))).all()
+        return jsonify([{"id": s.id, "name": s.name, "icon": s.icon, "ownerId": s.owner_id, "inviteCode": s.invite_code} for s in servers])
 
-        row = db.get(RoleModel, role_id)
-        db.delete(row)
+@app.route("/servers", methods=['POST'])
+@token_required
+def api_create_server(current_user_id):
+    p = request.json
+    if not p: return jsonify({"detail": "Missing body"}), 400
+    name = p.get('name', 'New Server')
+    with Session(engine) as db:
+        sid, inv = str(uuid.uuid4())[:8], str(uuid.uuid4())[:6].upper()
+        s = ServerModel(id=sid, name=name, icon=p.get('icon', name[:1].upper()), owner_id=current_user_id, invite_code=inv)
+        db.add(s)
+        owner_role = RoleModel(id=f"{sid}-owner", server_id=sid, name="Owner", position=100, manage_server=True, manage_channels=True, manage_roles=True, manage_messages=True)
+        db.add(owner_role)
+        m = MembershipModel(user_id=current_user_id, server_id=sid)
+        m.roles.append(owner_role)
+        db.add(m)
+        db.add(ChannelModel(id=str(uuid.uuid4())[:8], server_id=sid, name="ogólny"))
         db.commit()
-        return "", 204
+        return jsonify({"id": s.id, "name": s.name, "inviteCode": s.invite_code, "ownerId": s.owner_id, "icon": s.icon}), 201
 
-
-@app.get("/servers/<server_id>/channels/<channel_id>/messages")
-def get_messages(server_id: str, channel_id: str):
+@app.route("/servers/join/<invite_code>", methods=['POST'])
+@token_required
+def api_join_server(invite_code, current_user_id):
+    code = invite_code.upper()
     with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        if not _channel_exists(db, server_id, channel_id):
-            return jsonify({"detail": "Channel not found"}), 404
-
-        rows = db.scalars(
-            select(MessageModel)
-            .where(
-                MessageModel.server_id == server_id,
-                MessageModel.channel_id == channel_id,
-            )
-            .order_by(MessageModel.id.asc())
-        ).all()
-        return jsonify(
-            [
-                {
-                    "id": f"m{m.id}",
-                    "author": m.author,
-                    "text": m.text,
-                    "time": m.time,
-                    "attachment": (
-                        {
-                            "type": m.attachment_type,
-                            "name": m.attachment_name,
-                            "url": f"/uploads/{m.attachment_path}" if m.attachment_path else None,
-                        }
-                        if m.attachment_type
-                        else None
-                    ),
-                }
-                for m in rows
-            ]
-        )
-
-
-@app.post("/servers/<server_id>/channels/<channel_id>/messages")
-def create_message(server_id: str, channel_id: str):
-    with Session(engine) as db:
-        if not _server_exists(db, server_id):
-            return jsonify({"detail": "Server not found"}), 404
-        if not _channel_exists(db, server_id, channel_id):
-            return jsonify({"detail": "Channel not found"}), 404
-
-        payload = request.get_json(silent=True) or {}
-        author = str(payload.get("author", "")).strip()
-        text = str(payload.get("text", "")).strip()
-        attachment = payload.get("attachment") or {}
-        actor_role_id = str(payload.get("actorRoleId", "")).strip() or None
-
-        denied = _require_permission_or_403(db, server_id, PERM_MANAGE_MESSAGES, actor_role_id)
-        if denied is not None:
-            return denied
-
-        if not author or not text:
-            return jsonify({"detail": "author and text are required"}), 400
-
-        row = MessageModel(
-            server_id=server_id,
-            channel_id=channel_id,
-            author=author,
-            text=text,
-            time=datetime.now().strftime("%H:%M"),
-            attachment_type=str(attachment.get("type", "")).strip() or None,
-            attachment_name=str(attachment.get("name", "")).strip() or None,
-            attachment_path=str(attachment.get("path", "")).strip() or None,
-        )
-        db.add(row)
+        s = db.scalar(select(ServerModel).where(ServerModel.invite_code == code))
+        if not s: return jsonify({"detail": "Invalid code"}), 404
+        if db.scalar(select(MembershipModel).where(MembershipModel.server_id == s.id, MembershipModel.user_id == current_user_id)):
+            return jsonify({"detail": "Already member"}), 400
+        db.add(MembershipModel(user_id=current_user_id, server_id=s.id))
         db.commit()
-        db.refresh(row)
+        return jsonify({"id": s.id, "name": s.name, "icon": s.icon, "ownerId": s.owner_id})
 
-        return (
-            jsonify(
-                {
-                    "id": f"m{row.id}",
-                    "author": row.author,
-                    "text": row.text,
-                    "time": row.time,
-                }
-            ),
-            201,
-        )
+# --- CHANNEL ROUTES ---
+@app.route("/servers/<sid>/channels", methods=['GET'])
+@token_required
+def api_get_channels(sid, current_user_id):
+    with Session(engine) as db:
+        chans = db.scalars(select(ChannelModel).where(ChannelModel.server_id == sid).order_by(ChannelModel.category.asc(), ChannelModel.name.asc())).all()
+        return jsonify([{"id": c.id, "name": c.name, "category": c.category, "topic": c.topic} for c in chans])
 
+@app.route("/servers/<sid>/members", methods=['GET'])
+@token_required
+def api_get_members(sid, current_user_id):
+    with Session(engine) as db:
+        mems = db.scalars(select(MembershipModel).where(MembershipModel.server_id == sid)).all()
+        return jsonify([{
+            "userId": m.user_id, "username": m.user.username, "nickname": m.nickname or m.user.display_name,
+            "isOnline": m.user.is_online, "roles": [{"id": r.id, "name": r.name} for r in m.roles]
+        } for m in mems])
 
-@app.post("/uploads")
-def upload_file():
-    uploaded = request.files.get("file")
-    if not uploaded or not uploaded.filename:
-        return jsonify({"detail": "file is required"}), 400
+@app.route("/servers/<sid>/channels/<cid>/messages", methods=['GET'])
+@token_required
+def api_get_messages(sid, cid, current_user_id):
+    with Session(engine) as db:
+        msgs = db.scalars(select(MessageModel).where(MessageModel.channel_id == cid).order_by(MessageModel.id.asc())).all()
+        return jsonify([{"id": m.id, "author": m.author_name, "authorId": m.author_id, "text": m.text, "time": m.time} for m in msgs])
 
-    original = secure_filename(uploaded.filename)
-    unique_name = f"{uuid.uuid4().hex}_{original}"
-    path = os.path.join(UPLOAD_DIR, unique_name)
-    uploaded.save(path)
+# --- SOCKETIO EVENTS ---
+sid_to_uid = {}
 
-    file_type = "image" if (uploaded.mimetype or "").startswith("image/") else "file"
-    return jsonify(
-        {
-            "type": file_type,
-            "name": original,
-            "path": unique_name,
-            "url": f"/uploads/{unique_name}",
-            "contentType": uploaded.mimetype,
-        }
-    )
+@socketio.on('authenticate')
+def on_authenticate(data):
+    uid = decode_token(data.get('token'))
+    if uid:
+        sid_to_uid[request.sid] = uid
+        with Session(engine) as db:
+            u = db.get(UserModel, uid)
+            if u:
+                u.is_online = True
+                db.commit()
+                emit('presence_update', {"userId": uid, "isOnline": True}, broadcast=True)
 
+@socketio.on('disconnect')
+def on_disconnect():
+    uid = sid_to_uid.pop(request.sid, None)
+    if uid:
+        with Session(engine) as db:
+            u = db.get(UserModel, uid)
+            if u:
+                u.is_online = False
+                db.commit()
+                emit('presence_update', {"userId": uid, "isOnline": False}, broadcast=True)
 
-@app.get("/uploads/<path:filename>")
-def serve_uploaded_file(filename: str):
-    return send_from_directory(UPLOAD_DIR, filename)
+@socketio.on('join')
+def on_join(data):
+    join_room(data['channelId'])
 
+@socketio.on('send_message')
+def on_send_message(data):
+    uid = sid_to_uid.get(request.sid)
+    if not uid: return
+    with Session(engine) as db:
+        u = db.get(UserModel, uid)
+        msg = MessageModel(server_id=data['serverId'], channel_id=data['channelId'], author_id=uid, author_name=u.display_name or u.username, text=data['text'], time=datetime.now().strftime("%H:%M"))
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        emit('new_message', {
+            "id": msg.id, "author": msg.author_name, "authorId": uid, "text": msg.text, "time": msg.time, "channelId": data['channelId']
+        }, room=data['channelId'])
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000, debug=False, use_reloader=False)
+    socketio.run(app, host="0.0.0.0", port=8000, debug=True)

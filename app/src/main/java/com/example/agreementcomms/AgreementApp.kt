@@ -1,183 +1,98 @@
 package com.example.agreementcomms
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.agreementcomms.ui.theme.AgreementCommsTheme
+import kotlinx.coroutines.flow.collectLatest
 
 @Composable
 fun AgreementApp() {
     val vm: ChatViewModel = viewModel()
     val state = vm.uiState
-    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
-
-    val galleryPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            vm.setComposerAttachment(
-                ComposerAttachment(
-                    type = AttachmentType.Image,
-                    name = resolveFileName(context, uri) ?: "image.jpg",
-                    localUri = uri.toString(),
-                    mimeType = resolveMimeType(context, uri),
-                    sizeLabel = resolveSizeLabel(context, uri)
-                )
-            )
+    LaunchedEffect(Unit) {
+        vm.errorEvents.collectLatest { error ->
+            snackbarHostState.showSnackbar(error)
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            vm.setComposerAttachment(
-                ComposerAttachment(
-                    type = if (resolveMimeType(context, uri).startsWith("image/")) AttachmentType.Image else AttachmentType.File,
-                    name = resolveFileName(context, uri) ?: "file",
-                    localUri = uri.toString(),
-                    mimeType = resolveMimeType(context, uri),
-                    sizeLabel = resolveSizeLabel(context, uri)
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            if (!state.isLoggedIn) {
+                LoginScreen(
+                    nickname = state.draftNickname,
+                    onNicknameChange = vm::onDraftNicknameChange,
+                    password = state.draftPassword,
+                    onPasswordChange = vm::onDraftPasswordChange,
+                    isRegisterMode = state.isRegisterMode,
+                    onToggleMode = vm::toggleRegisterMode,
+                    onEnter = { if (state.isRegisterMode) vm.register() else vm.login() },
+                    isLoading = state.isLoading
                 )
-            )
-        }
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && pendingCameraUri != null) {
-            val uri = pendingCameraUri!!
-            vm.setComposerAttachment(
-                ComposerAttachment(
-                    type = AttachmentType.Image,
-                    name = resolveFileName(context, uri) ?: "camera_photo.jpg",
-                    localUri = uri.toString(),
-                    mimeType = resolveMimeType(context, uri),
-                    sizeLabel = resolveSizeLabel(context, uri)
+            } else {
+                MainScreen(
+                    nickname = state.nickname,
+                    servers = state.servers,
+                    section = state.section,
+                    onSectionChange = vm::setSection,
+                    selectedServerId = state.selectedServerId,
+                    onServerSelected = vm::onServerSelected,
+                    selectedChannelId = state.selectedChannelId,
+                    onChannelSelected = vm::onChannelSelected,
+                    unreadCounts = vm.unreadCounts,
+                    messages = vm.conversations[state.selectedChannelId] ?: emptyList(),
+                    onSendMessage = vm::sendMessage,
+                    onTyping = vm::sendTyping,
+                    typingText = state.typingUsers[state.selectedChannelId],
+                    members = state.members,
+                    isLoading = state.isLoading,
+                    onLogout = vm::logout,
+                    displayName = state.settingsDisplayName,
+                    statusText = state.settingsStatusText,
+                    bio = state.settingsBio,
+                    avatarUrl = state.settingsAvatarUrl,
+                    onSaveProfile = vm::saveProfile,
+                    onDisplayNameChange = vm::onSettingsDisplayNameChange,
+                    onStatusTextChange = vm::onSettingsStatusTextChange,
+                    onBioChange = vm::onSettingsBioChange,
+                    onAvatarUrlChange = vm::onSettingsAvatarUrlChange,
+                    roles = state.serverRoles,
+                    canManageServer = vm.canManageServer(),
+                    onAssignRole = vm::assignRole,
+                    onRemoveRole = vm::removeRole,
+                    onCreateServer = vm::createServer,
+                    onJoinServer = vm::joinServer,
+                    onCreateChannel = vm::createChannel,
+                    onDeleteChannel = vm::deleteChannel,
+                    onDeleteServer = vm::deleteServer,
+                    // Preferences
+                    compactMode = state.compactMode,
+                    onToggleCompactMode = vm::toggleCompactMode,
+                    pushEnabled = state.pushEnabled,
+                    onTogglePush = vm::togglePush,
+                    vibrationEnabled = state.vibrationEnabled,
+                    onToggleVibration = vm::toggleVibration
                 )
-            )
-        }
-    }
+            }
 
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            val uri = createTempCameraUri(context)
-            pendingCameraUri = uri
-            cameraLauncher.launch(uri)
-        }
-    }
-
-    if (!state.isLoggedIn) {
-        LoginScreen(
-            nickname = state.draftNickname,
-            onNicknameChange = vm::onDraftNicknameChange,
-            onEnter = vm::login
-        )
-    } else {
-        MainScreen(
-            nickname = state.nickname,
-            servers = state.servers,
-            section = state.section,
-            onSectionChange = vm::setSection,
-            selectedServerId = state.selectedServerId,
-            onServerSelected = vm::onServerSelected,
-            selectedChannel = state.selectedChannel,
-            onChannelSelected = vm::onChannelSelected,
-            unreadCounts = vm.unreadCounts,
-            backendConnected = state.backendConnected,
-            backendError = state.backendError,
-            composerAttachment = state.composerAttachment,
-            onPickFromGallery = {
-                galleryPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
-            },
-            onPickFile = {
-                filePicker.launch(arrayOf("*/*"))
-            },
-            onTakePhoto = {
-                val hasPermission = ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.CAMERA
-                ) == PackageManager.PERMISSION_GRANTED
-
-                if (hasPermission) {
-                    val uri = createTempCameraUri(context)
-                    pendingCameraUri = uri
-                    cameraLauncher.launch(uri)
-                } else {
-                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                }
-            },
-            onClearComposerAttachment = { vm.setComposerAttachment(null) },
-            settingsDisplayName = state.settingsDisplayName,
-            settingsStatusText = state.settingsStatusText,
-            settingsPushEnabled = state.settingsPushEnabled,
-            settingsVibrationEnabled = state.settingsVibrationEnabled,
-            settingsCompactModeEnabled = state.settingsCompactModeEnabled,
-            settingsSavedAtLeastOnce = state.settingsSavedAtLeastOnce,
-            onSettingsDisplayNameChange = vm::onSettingsDisplayNameChange,
-            onSettingsStatusTextChange = vm::onSettingsStatusTextChange,
-            onSettingsPushEnabledChange = vm::onSettingsPushEnabledChange,
-            onSettingsVibrationEnabledChange = vm::onSettingsVibrationEnabledChange,
-            onSettingsCompactModeEnabledChange = vm::onSettingsCompactModeEnabledChange,
-            onSaveSettings = vm::saveSettings,
-            roles = vm.activeRoles(),
-            onCreateServer = vm::createServer,
-            onUpdateSelectedServer = vm::updateSelectedServer,
-            onDeleteSelectedServer = vm::deleteSelectedServer,
-            onCreateChannel = vm::createChannel,
-            onRenameSelectedChannel = vm::renameSelectedChannel,
-            onDeleteSelectedChannel = vm::deleteSelectedChannel,
-            onCreateRole = vm::createRole,
-            onUpdateRole = vm::updateRole,
-            onDeleteRole = vm::deleteRole,
-            activeRoleId = vm.activeRoleId(),
-            onSelectActiveRole = vm::selectActiveRole,
-            canManageServer = vm.canManageServer(),
-            canManageChannels = vm.canManageChannels(),
-            canManageRoles = vm.canManageRoles(),
-            canManageMessages = vm.canManageMessages(),
-            messages = vm.activeMessages(),
-            onSendMessage = { text ->
-                val attachment = state.composerAttachment
-                if (attachment != null) {
-                    val bytes = readUriBytes(context, Uri.parse(attachment.localUri))
-                    vm.sendMessage(
-                        text = text,
-                        attachmentBytes = bytes,
-                        attachmentFileName = attachment.name,
-                        attachmentMimeType = attachment.mimeType
-                    )
-                } else {
-                    vm.sendMessage(text = text)
+            if (state.isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
                 }
             }
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun AgreementPreview() {
-    AgreementCommsTheme {
-        AgreementApp()
+        }
     }
 }

@@ -5,14 +5,12 @@ plugins {
 
 android {
     namespace = "com.example.agreementcomms"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.example.agreementcomms"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
@@ -51,6 +49,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
+    implementation(libs.socket.io.client)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
