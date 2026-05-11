@@ -1,77 +1,59 @@
-# Accordance
+# Accordance — Komunikator Nowej Generacji
 
-Accordance to szkolny projekt na przedmiot **Aplikacje Mobilne**.
-Pomysł: lekka kopia komunikatora w stylu Discord. (Discord = Niezgoda, Accordance = Zgoda)
+Accordance to nowoczesna aplikacja mobilna zainspirowana platformą Discord (Discord = Niezgoda, Accordance = Zgoda). Jest to kompleksowy projekt realizowany w ramach przedmiotu **Aplikacje Mobilne**, łączący zaawansowane technologie Androida z wydajnym backendem.
 
-## Technologie
+## 🌟 Kluczowe Funkcjonalności
 
-- **Android (Kotlin)**
-- **Jetpack Compose (Material 3)**
-- Gradle Kotlin DSL
-- **Backend: Python Flask + MySQL** (folder `backend/`)
+### 💬 Komunikacja i Czat
+- **Real-time Messaging**: Natychmiastowa wymiana wiadomości dzięki integracji z **Socket.io**.
+- **Szyfrowanie AES**: Bezpieczeństwo danych dzięki symetrycznemu szyfrowaniu wiadomości (AES/ECB/PKCS5Padding).
+- **Wskaźniki Pisania**: Powiadomienia w czasie rzeczywistym, gdy inny użytkownik tworzy wiadomość.
+- **Statusy Obecności**: System śledzenia statusu online/offline członków serwera.
+- **Załączniki**: Możliwość przesyłania zdjęć oraz plików bezpośrednio na czacie.
+- **Wyszukiwanie**: Intuicyjna wyszukiwarka wiadomości wewnątrz kanałów.
 
-## Skład zespołu
+### 🛡️ Zarządzanie Społecznością
+- **System Serwerów i Kanałów**: Tworzenie własnych serwerów oraz kategoryzowanie kanałów (tekstowe, NSFW, itp.).
+- **Zaawansowane Role**: Tworzenie ról z niestandardowymi kolorami, pozycjami i uprawnieniami.
+- **Precyzyjne Uprawnienia**: System permisji obejmujący zarządzanie serwerem, kanałami, rolami oraz uprawnienia do wysyłania wiadomości.
+- **Kody Zaproszeń**: Łatwe dołączanie do nowych społeczności za pomocą unikalnych kodów.
 
-- Autor: MKazm
-- Tryb pracy: indywidualnie
+### 👤 Personalizacja i UX
+- **Profile Użytkowników**: Edycja pseudonimu (Display Name), statusu tekstowego, bio oraz awatara.
+- **Tryb Wyglądu**: Opcjonalny **tryb kompaktowy** dla bardziej gęstego układu wiadomości.
+- **Powiadomienia**: Zarządzanie powiadomieniami push oraz wibracjami z poziomu ustawień.
+- **Discord-like UI**: Nowoczesny interfejs oparty na Jetpack Compose z drawerem nawigacyjnym i panelem członków.
 
-## Główne funkcjonalności (MVP)
+## 🛠️ Stos Technologiczny
 
-- Ekran wejścia/logowania (mock z nickiem)
-- Lista serwerów (drawer)
-- Lista kanałów dla wybranego serwera
-- Osobny czat dla każdego kanału każdego serwera
-- Prosty ekran czatu (wiadomości lokalne, bez backendu)
-- Drawer typu Discord: pełny ekran czatu + wysuwany panel
-- Ustawienia (mock)
+- **Frontend**: 
+  - Kotlin + Jetpack Compose (Material 3)
+  - **Retrofit** (komunikacja REST API)
+  - **Socket.io Client** (WebSockety)
+  - **Coil** (ładowanie obrazów)
+  - **DataStore** (lokalne preferencje użytkownika)
+- **Backend**:
+  - Python Flask (serwer API)
+  - MySQL (baza danych)
+  - Socket.io (komunikacja dwukierunkowa)
+- **Bezpieczeństwo**:
+  - JCE (Java Cryptography Extension) dla szyfrowania AES.
+  - Interceptor autoryzacji (Bearer Token).
 
-## Status względem harmonogramu
+## 🏗️ Architektura Systemu
 
-### Etap 1 (31 marca) — zrealizowane
+Aplikacja została zaprojektowana zgodnie z wzorcem **MVVM (Model-View-ViewModel)**:
+- **UI (Compose)**: Reaktywne widoki odświeżane na podstawie stanu `ChatUiState`.
+- **ViewModel**: Centralny punkt logiki biznesowej, zarządzający połączeniami socketowymi i synchronizacją danych.
+- **Repository**: Warstwa abstrakcji nad API i socketami, odpowiedzialna za pobieranie i wysyłanie danych.
+- **SocketHandler**: Dedykowany moduł do obsługi komunikacji niskopoziomowej przez WebSockety.
 
-W aplikacji zaimplementowano:
+## 🚀 Jak zacząć?
 
-1. ekran logowania,
-2. wybór serwera i kanału,
-3. widok czatu z wysyłaniem wiadomości lokalnych,
-4. ekran ustawień (podstawowy),
-5. dark mode + Discord-like UI,
-6. mockowe konwersacje o różnej długości (test scrolla).
+1.  **Backend**: Upewnij się, że serwer Python Flask jest uruchomiony na adresie `http://10.0.2.2:8000` (domyślny adres dla emulatora Androida).
+2.  **Baza danych**: Skonfiguruj MySQL zgodnie ze schematem dostępnym w folderze `backend/`.
+3.  **Android**: Skompiluj aplikację w Android Studio. Przy pierwszym uruchomieniu skorzystaj z opcji **Zarejestruj się**.
 
-## Architektura (stan aktualny)
-
-- UI: Jetpack Compose (single-activity)
-- Stan: `ViewModel` + Compose state
-- Dane: `Repository` + backend API + fallback mock in-memory
-- Backend persistence: MySQL + file system uploads
-- Routing widoków: sekcje `Chat` / `Settings`
-
-To oznacza: aplikacja pobiera dane z API, ale nadal nie ma trwałości lokalnej (po restarcie brak cache).
-
-## Architektura docelowa (kolejny etap)
-
-- `ui/` – composable + screen state
-- `domain/` – modele i use-case'y
-- `data/` – repository + remote source (API) + local cache (Room)
-- `ViewModel` + `UiState` + eventy UI
-- Docelowo serwery/kanały/wiadomości będą pobierane z backendu
-
-## Backend (wstępnie dodany)
-
-Dodano prosty serwer API w folderze `backend/`:
-
-- `GET /servers`
-- `GET /servers/{server_id}/channels`
-- `GET /servers/{server_id}/channels/{channel_id}/messages`
-- `POST /servers/{server_id}/channels/{channel_id}/messages`
-
-To pozwala stopniowo przechodzić z mocków lokalnych na realny fetch.
-
-## Plan dalszych prac (do 10 maja)
-
-- [x] Refactor do `ViewModel + Repository`
-- [x] Integracja backendu (serwery, kanały, wiadomości)
-- [ ] Trwałość lokalna (Room) + cache
-- [ ] Reakcje, piny, edycja/usuwanie wiadomości
-- [ ] Uwierzytelnianie i profile użytkowników
-- [ ] Finalne poprawki UI/UX pod prezentację
+---
+*Autor: MKazm*
+*Projekt szkolny — Accordance 2024*

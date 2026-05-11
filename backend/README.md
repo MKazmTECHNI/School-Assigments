@@ -1,49 +1,65 @@
-# Accordance API (Flask + MySQL)
+# Accordance Backend (Python Flask + Socket.io)
 
-Minimal backend API for servers, channels and messages.
+Wydajny i skalowalny serwer API oraz WebSocket dla komunikatora Accordance. Obsługuje komunikację w czasie rzeczywistym, zaawansowany system uprawnień oraz bezpieczne przechowywanie danych.
 
-Data persistence:
+## 🚀 Funkcje
 
-- MySQL (messages/servers/channels)
-- Local file system (`uploads/`) for images/files
+-   **Real-time Communication**: Pełna integracja z **Flask-SocketIO** dla natychmiastowej wymiany wiadomości i wskaźników pisania.
+-   **Autentykacja JWT**: Bezpieczne logowanie i rejestracja z wykorzystaniem tokenów JSON Web Token.
+-   **System Uprawnień**: 
+    -   Dynamiczne role z definiowalnymi kolorami i priorytetami.
+    -   Nadpisywanie uprawnień na poziomie kanałów (Channel Overrides).
+    -   Zarządzanie serwerem, kanałami, rolami i wiadomościami.
+-   **Trwałość Danych**: Obsługa baz danych **MySQL** (produkcyjnie) oraz **SQLite** (lokalnie/dewelopersko) przez SQLAlchemy.
+-   **File Storage**: System przesyłania załączników (zdjęcia, pliki) z obsługą systemów plików.
+-   **Presence Tracking**: Śledzenie statusu online/offline użytkowników w czasie rzeczywistym.
 
-## Run
+## 🛠️ Instalacja i Uruchomienie
 
-1. Create and activate virtual environment
-2. Install deps:
+1.  **Środowisko wirtualne**:
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # Linux/macOS
+    venv\Scripts\activate     # Windows
+    ```
 
-```bash
-pip install -r requirements.txt
-```
+2.  **Instalacja zależności**:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-3. Configure environment:
+3.  **Konfiguracja**:
+    Skopiuj plik `.env.example` do `.env` i uzupełnij klucze:
+    -   `DATABASE_URL`: Adres Twojej bazy MySQL (lub pozostaw puste dla SQLite).
+    -   `SECRET_KEY`: Unikalny klucz dla podpisów JWT.
 
-```bash
-copy .env.example .env
-```
+4.  **Baza danych (Opcjonalnie - Docker)**:
+    ```bash
+    docker compose up -d
+    ```
 
-4. Start MySQL (Docker option):
+5.  **Start Serwera**:
+    ```bash
+    python main.py
+    ```
 
-```bash
-docker compose up -d
-```
+Serwer domyślnie uruchamia się na `http://0.0.0.0:8000`.
 
-5. Start API:
+## 📡 Główne Endpointy API
 
-```bash
-py main.py
-```
+-   `POST /auth/register` - Rejestracja nowego użytkownika.
+-   `POST /auth/login` - Logowanie i pobranie tokena.
+-   `GET /servers` - Lista serwerów użytkownika.
+-   `POST /servers` - Tworzenie nowego serwera.
+-   `GET /servers/{sid}/channels` - Pobieranie kanałów danego serwera.
+-   `POST /uploads` - Przesyłanie załączników.
 
-Note: Android emulator uses `http://10.0.2.2:8000/` to reach host localhost.
+## 🔌 Zdarzenia WebSocket (Socket.io)
 
-Note: Tables are auto-created on startup.
+-   `authenticate` - Autoryzacja połączenia tokenem JWT.
+-   `send_message` - Wysyłanie zaszyfrowanej wiadomości na kanał.
+-   `join` - Dołączanie do pokoju (room) kanału.
+-   `typing_start` - Rozpoczęcie pisania wiadomości.
 
-## Endpoints
-
-- `GET /health`
-- `GET /servers`
-- `GET /servers/{server_id}/channels`
-- `GET /servers/{server_id}/channels/{channel_id}/messages`
-- `POST /servers/{server_id}/channels/{channel_id}/messages`
-- `POST /uploads` (multipart form-data: `file`)
-- `GET /uploads/{filename}`
+---
+*Projekt zrealizowany na potrzeby przedmiotu Aplikacje Mobilne.*
