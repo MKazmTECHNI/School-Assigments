@@ -75,14 +75,7 @@ class ChatRepository {
                                 text = it.text,
                                 time = it.time,
                                 isMine = it.authorId == userId,
-                                authorId = it.authorId,
-                                attachments = it.attachment?.let { att ->
-                                    listOf(MessageAttachment(
-                                        type = if (att.type == "image") AttachmentType.Image else AttachmentType.File,
-                                        name = att.name,
-                                        url = att.url
-                                    ))
-                                } ?: emptyList()
+                                authorId = it.authorId
                             )
                         }
                     )
@@ -135,8 +128,8 @@ class ChatRepository {
         return Channel(created.id, created.name, serverId, category = created.category)
     }
 
-    suspend fun updateChannel(serverId: String, channelId: String, name: String?, topic: String?, category: String?): ApiChannel {
-        return AccordanceApiClient.api.updateChannel(serverId, channelId, UpdateChannelRequest(name, topic, category = category))
+    suspend fun updateChannel(serverId: String, channelId: String, name: String?, topic: String?, category: String?, slowmode: Int?, nsfw: Boolean?): ApiChannel {
+        return AccordanceApiClient.api.updateChannel(serverId, channelId, UpdateChannelRequest(name, topic, category, slowmode, nsfw))
     }
 
     suspend fun deleteChannel(serverId: String, channelId: String) = AccordanceApiClient.api.deleteChannel(serverId, channelId)
@@ -156,7 +149,7 @@ class ChatRepository {
     suspend fun deleteRole(serverId: String, roleId: String) = AccordanceApiClient.api.deleteRole(serverId, roleId)
 
     suspend fun getChannelRoleOverrides(serverId: String, channelId: String): Map<String, RolePermissionsOverride> {
-        val overrides = AccordanceApiClient.api.getChannelRoleOverrides(serverId, channelId)
+        val overrides = try { AccordanceApiClient.api.getChannelRoleOverrides(serverId, channelId) } catch (e: Exception) { emptyList() }
         return overrides.associate { 
             it.roleId to RolePermissionsOverride(
                 it.permissions.manageServer, it.permissions.manageChannels, 
@@ -164,6 +157,14 @@ class ChatRepository {
             )
         }
     }
+
+    suspend fun upsertChannelRoleOverride(serverId: String, channelId: String, roleId: String, permissions: RolePermissionsOverride) {
+        val apiPerms = ApiRolePermissionsOverride(permissions.manageServer, permissions.manageChannels, permissions.manageRoles, permissions.manageMessages)
+        AccordanceApiClient.api.upsertChannelRoleOverride(serverId, channelId, roleId, UpdateChannelRoleOverrideRequest(apiPerms))
+    }
+
+    suspend fun deleteChannelRoleOverride(serverId: String, channelId: String, roleId: String) = 
+        AccordanceApiClient.api.deleteChannelRoleOverride(serverId, channelId, roleId)
 
     suspend fun uploadAttachment(fileName: String, mimeType: String, content: ByteArray): UploadResponse {
         val body = content.toRequestBody(mimeType.toMediaTypeOrNull())

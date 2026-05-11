@@ -1,6 +1,8 @@
 package com.example.agreementcomms
 
 import android.app.Application
+import android.util.Base64
+import android.util.Log
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.AndroidViewModel
@@ -12,7 +14,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
@@ -44,7 +45,20 @@ data class ChatUiState(
     // Preferences
     val compactMode: Boolean = false,
     val pushEnabled: Boolean = true,
-    val vibrationEnabled: Boolean = true
+    val vibrationEnabled: Boolean = true,
+    // Server Editing Drafts
+    val draftServerName: String = "",
+    val draftServerIcon: String = "",
+    // Channel Editing Drafts
+    val draftChannelName: String = "",
+    val draftChannelTopic: String = "",
+    val draftChannelCategory: String = "",
+    val draftChannelSlowmode: Int = 0,
+    val draftChannelNsfw: Boolean = false,
+    // Role Editing Drafts
+    val selectedRoleId: String = "",
+    val draftRoleName: String = "",
+    val draftRolePermissions: RolePermissions = RolePermissions()
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,7 +66,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = ChatRepository()
     private val settingsStore = SettingsStore(application.applicationContext)
     private val socketHandler = SocketHandler()
-    private val encryptionKey = "AccordanceKey123".toByteArray() 
+    private val encryptionKey = "AccordanceKey123".toByteArray(Charsets.UTF_8) 
 
     var uiState by mutableStateOf(ChatUiState())
         private set
@@ -131,7 +145,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleIncomingSocketMessage(data: JSONObject) {
         val cid = data.getString("channelId")
         val encryptedText = data.getString("text")
-        val decryptedText = try { decrypt(encryptedText) } catch (e: Exception) { encryptedText }
+        val decryptedText = decrypt(encryptedText)
 
         val msg = Message(
             id = data.optString("id", data.optInt("id", 0).toString()),
@@ -224,18 +238,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onServerSelected(serverId: String) {
         val server = uiState.servers.find { it.id == serverId } ?: return
-        uiState = uiState.copy(selectedServerId = serverId, selectedChannelId = server.channels.firstOrNull()?.id ?: "")
-        refreshMembers(serverId)
-        refreshRoles(serverId)
-        refreshChannelOverrides()
-        socketHandler.joinChannel(uiState.selectedChannelId)
+        val firstChannelId = server.channels.firstOrNull()?.id ?: ""
+        
+        uiState = uiState.copy(
+            selectedServerId = serverId, 
+            selectedChannelId = firstChannelId,
+            draftServerName = server.name,
+            draftServerIcon = server.icon
+        )
+        refreshContextData(serverId, firstChannelId)
+        if (firstChannelId.isNotBlank()) {
+            socketHandler.joinChannel(firstChannelId)
+        }
     }
 
     fun onChannelSelected(channelId: String) {
-        uiState = uiState.copy(selectedChannelId = channelId)
-        refreshChannelOverrides()
+        val server = uiState.servers.find { it.id == uiState.selectedServerId }
+        val channel = server?.channels?.find { it.id == channelId }
+        uiState = uiState.copy(
+            selectedChannelId = channelId,
+            draftChannelName = channel?.name ?: "",
+            draftChannelTopic = channel?.topic ?: "",
+            draftChannelCategory = channel?.category ?: "",
+            draftChannelSlowmode = channel?.slowmodeSeconds ?: 0,
+            draftChannelNsfw = channel?.isNsfw ?: false
+        )
+        refreshContextData(uiState.selectedServerId, channelId)
         socketHandler.joinChannel(channelId)
         unreadCounts[channelId] = 0
+    }
+
+    private fun refreshContextData(serverId: String, channelId: String) = viewModelScope.launch {
+        if (serverId.isBlank()) return@launch
+        try {
+            val members = repository.getMembers(serverId)
+            val roles = repository.getRoles(serverId)
+            val overrides = if (channelId.isNotBlank()) repository.getChannelRoleOverrides(serverId, channelId) else emptyMap()
+            
+            uiState = uiState.copy(
+                members = members,
+                serverRoles = roles,
+                channelOverrides = overrides
+            )
+        } catch (e: Exception) {
+            Log.e("ChatViewModel", "Error refreshing context: ${e.message}")
+        }
     }
 
     fun sendMessage(text: String) {
@@ -259,21 +306,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val payload = repository.fetchBackendBootstrap(uiState.nickname, uiState.userId)
-                conversations.putAll(payload.conversations)
+                
+                // Decrypt historical messages
+                payload.conversations.forEach { (channelId, messages) ->
+                    val decryptedMessages = messages.map { msg ->
+                        msg.copy(text = decrypt(msg.text))
+                    }
+                    val list = conversations.getOrPut(channelId) { mutableStateListOf() }
+                    list.clear()
+                    list.addAll(decryptedMessages)
+                }
+
+                val sid = uiState.selectedServerId.ifBlank { payload.servers.firstOrNull()?.id ?: "" }
+                val cid = uiState.selectedChannelId.ifBlank { payload.servers.firstOrNull()?.channels?.firstOrNull()?.id ?: "" }
+
                 uiState = uiState.copy(
                     servers = payload.servers,
-                    selectedServerId = uiState.selectedServerId.ifBlank { payload.servers.firstOrNull()?.id ?: "" },
-                    selectedChannelId = uiState.selectedChannelId.ifBlank { payload.servers.firstOrNull()?.channels?.firstOrNull()?.id ?: "" },
+                    selectedServerId = sid,
+                    selectedChannelId = cid,
                     backendConnected = true,
                     backendError = null
                 )
-                if (uiState.selectedServerId.isNotBlank()) {
-                    refreshMembers(uiState.selectedServerId)
-                    refreshRoles(uiState.selectedServerId)
-                    refreshChannelOverrides()
+                
+                if (sid.isNotBlank()) {
+                    val server = uiState.servers.find { it.id == sid }
+                    val channel = server?.channels?.find { it.id == cid }
+                    
+                    uiState = uiState.copy(
+                        draftServerName = server?.name ?: "",
+                        draftServerIcon = server?.icon ?: "",
+                        draftChannelName = channel?.name ?: "",
+                        draftChannelTopic = channel?.topic ?: "",
+                        draftChannelCategory = channel?.category ?: "",
+                        draftChannelSlowmode = channel?.slowmodeSeconds ?: 0,
+                        draftChannelNsfw = channel?.isNsfw ?: false
+                    )
+                    refreshContextData(sid, cid)
                 }
-                if (uiState.selectedChannelId.isNotBlank()) {
-                    socketHandler.joinChannel(uiState.selectedChannelId)
+                
+                if (cid.isNotBlank()) {
+                    socketHandler.joinChannel(cid)
                 }
             } catch (e: Exception) {
                 uiState = uiState.copy(backendConnected = false, backendError = e.message)
@@ -281,38 +353,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun refreshMembers(sid: String) = viewModelScope.launch {
-        try { uiState = uiState.copy(members = repository.getMembers(sid)) } catch (_: Exception) {}
-    }
-
-    private fun refreshRoles(sid: String) = viewModelScope.launch {
-        try { uiState = uiState.copy(serverRoles = repository.getRoles(sid)) } catch (_: Exception) {}
-    }
-
-    private fun refreshChannelOverrides() = viewModelScope.launch {
-        if (uiState.selectedServerId.isBlank() || uiState.selectedChannelId.isBlank()) return@launch
-        try {
-            val ovs = repository.getChannelRoleOverrides(uiState.selectedServerId, uiState.selectedChannelId)
-            uiState = uiState.copy(channelOverrides = ovs)
-        } catch (_: Exception) {}
-    }
-
-    // --- PERMISSIONS Logic ---
     private fun getEffectivePermissions(): RolePermissions {
-        val server = uiState.servers.find { it.id == uiState.selectedServerId }
-        if (server?.ownerId == uiState.userId) {
+        val serverId = uiState.selectedServerId
+        if (serverId.isBlank()) return RolePermissions()
+
+        val server = uiState.servers.find { it.id == serverId }
+        if (server != null && server.ownerId == uiState.userId) {
             return RolePermissions(true, true, true, true)
         }
         
-        val member = uiState.members.find { it.userId == uiState.userId } ?: return RolePermissions()
+        val member = uiState.members.find { it.userId == uiState.userId }
+        // If we know the user is in the server but member details haven't synced yet, 
+        // allow message sending by default.
+        if (member == null) {
+            return if (server != null) RolePermissions(manageMessages = true) else RolePermissions()
+        }
+
         val roleIds = member.roles.map { it.id }
         val roles = uiState.serverRoles.filter { it.id in roleIds }
         
+        // Basic members without assigned roles should be able to send messages.
+        val defaultManageMessages = if (roles.isEmpty()) true else roles.any { it.permissions.manageMessages }
+
         val base = RolePermissions(
             manageServer = roles.any { it.permissions.manageServer },
             manageChannels = roles.any { it.permissions.manageChannels },
             manageRoles = roles.any { it.permissions.manageRoles },
-            manageMessages = roles.any { it.permissions.manageMessages }
+            manageMessages = defaultManageMessages
         )
         
         val overrides = uiState.channelOverrides.filter { it.key in roleIds }.values
@@ -329,16 +396,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun canManageRoles() = getEffectivePermissions().manageRoles
     fun canSendMessages() = getEffectivePermissions().manageMessages
 
-    // --- Actions ---
     fun assignRole(uid: String, rid: String) = viewModelScope.launch {
         if (!canManageRoles()) return@launch
-        try { repository.addRoleToMember(uiState.selectedServerId, uid, rid); refreshMembers(uiState.selectedServerId) }
+        try { repository.addRoleToMember(uiState.selectedServerId, uid, rid); refreshContextData(uiState.selectedServerId, uiState.selectedChannelId) }
         catch (e: Exception) { _errorEvents.emit("Błąd uprawnień") }
     }
 
     fun removeRole(uid: String, rid: String) = viewModelScope.launch {
         if (!canManageRoles()) return@launch
-        try { repository.removeRoleFromMember(uiState.selectedServerId, uid, rid); refreshMembers(uiState.selectedServerId) }
+        try { repository.removeRoleFromMember(uiState.selectedServerId, uid, rid); refreshContextData(uiState.selectedServerId, uiState.selectedChannelId) }
         catch (e: Exception) { _errorEvents.emit("Błąd uprawnień") }
     }
 
@@ -384,6 +450,81 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         finally { uiState = uiState.copy(isLoading = false) }
     }
 
+    fun saveServerSettings() = viewModelScope.launch {
+        if (!canManageServer()) return@launch
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.updateServer(uiState.selectedServerId, uiState.draftServerName, uiState.draftServerIcon)
+            bootstrapFromBackend()
+            _errorEvents.emit("Ustawienia serwera zapisane")
+        } catch (e: Exception) { _errorEvents.emit("Błąd zapisu ustawień serwera") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    fun saveChannelSettings() = viewModelScope.launch {
+        if (!canManageChannels()) return@launch
+        uiState = uiState.copy(isLoading = true)
+        try {
+            repository.updateChannel(
+                uiState.selectedServerId, 
+                uiState.selectedChannelId, 
+                uiState.draftChannelName, 
+                uiState.draftChannelTopic, 
+                uiState.draftChannelCategory,
+                uiState.draftChannelSlowmode,
+                uiState.draftChannelNsfw
+            )
+            bootstrapFromBackend()
+            _errorEvents.emit("Ustawienia kanału zapisane")
+        } catch (e: Exception) { _errorEvents.emit("Błąd zapisu ustawień kanału") }
+        finally { uiState = uiState.copy(isLoading = false) }
+    }
+
+    fun createRole(name: String) = viewModelScope.launch {
+        if (!canManageRoles()) return@launch
+        try {
+            repository.createRole(uiState.selectedServerId, name, "#FFFFFF", 0, RolePermissions(false, false, false, true))
+            refreshContextData(uiState.selectedServerId, uiState.selectedChannelId)
+        } catch (e: Exception) { _errorEvents.emit("Błąd tworzenia roli") }
+    }
+
+    fun deleteRole(roleId: String) = viewModelScope.launch {
+        if (!canManageRoles()) return@launch
+        try {
+            repository.deleteRole(uiState.selectedServerId, roleId)
+            refreshContextData(uiState.selectedServerId, uiState.selectedChannelId)
+        } catch (e: Exception) { _errorEvents.emit("Błąd usuwania roli") }
+    }
+
+    fun onRoleDraftSelect(roleId: String) {
+        val role = uiState.serverRoles.find { it.id == roleId }
+        uiState = uiState.copy(
+            selectedRoleId = roleId,
+            draftRoleName = role?.name ?: "",
+            draftRolePermissions = role?.permissions ?: RolePermissions()
+        )
+    }
+
+    fun onDraftRolePermissionsChange(perms: RolePermissions) {
+        uiState = uiState.copy(draftRolePermissions = perms)
+    }
+
+    fun saveRoleSettings() = viewModelScope.launch {
+        if (!canManageRoles()) return@launch
+        try {
+            repository.updateRole(
+                uiState.selectedServerId,
+                uiState.selectedRoleId,
+                uiState.draftRoleName,
+                null, 
+                null,
+                uiState.draftRolePermissions
+            )
+            refreshContextData(uiState.selectedServerId, uiState.selectedChannelId)
+            _errorEvents.emit("Rola zaktualizowana")
+        } catch (e: Exception) { _errorEvents.emit("Błąd zapisu roli") }
+    }
+
     private fun saveSettings() = viewModelScope.launch {
         settingsStore.save(UserSettings(
             token = uiState.token, userId = uiState.userId, username = uiState.nickname,
@@ -408,17 +549,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun encrypt(text: String): String {
-        val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(encryptionKey, "AES"))
-        return Base64.getEncoder().encodeToString(cipher.doFinal(text.toByteArray()))
+        return try {
+            val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(encryptionKey, "AES"))
+            val encryptedBytes = cipher.doFinal(text.toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e("ChatViewModel", "Encryption error: ${e.message}")
+            text
+        }
     }
 
     private fun decrypt(encrypted: String): String {
+        if (encrypted.isBlank()) return ""
         return try {
             val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(encryptionKey, "AES"))
-            String(cipher.doFinal(Base64.getDecoder().decode(encrypted)))
-        } catch (e: Exception) { encrypted }
+            val decodedBytes = Base64.decode(encrypted, Base64.DEFAULT)
+            val decryptedBytes = cipher.doFinal(decodedBytes)
+            String(decryptedBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e("ChatViewModel", "Decryption error for '$encrypted': ${e.message}")
+            encrypted 
+        }
     }
 
     fun onSettingsDisplayNameChange(v: String) { uiState = uiState.copy(settingsDisplayName = v) }
@@ -427,6 +580,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun onSettingsAvatarUrlChange(v: String) { uiState = uiState.copy(settingsAvatarUrl = v) }
     fun onDraftNicknameChange(v: String) { uiState = uiState.copy(draftNickname = v) }
     fun onDraftPasswordChange(v: String) { uiState = uiState.copy(draftPassword = v) }
+    fun onDraftServerNameChange(v: String) { uiState = uiState.copy(draftServerName = v) }
+    fun onDraftServerIconChange(v: String) { uiState = uiState.copy(draftServerIcon = v) }
+    fun onDraftChannelNameChange(v: String) { uiState = uiState.copy(draftChannelName = v) }
+    fun onDraftChannelTopicChange(v: String) { uiState = uiState.copy(draftChannelTopic = v) }
+    fun onDraftChannelCategoryChange(v: String) { uiState = uiState.copy(draftChannelCategory = v) }
+    fun onDraftChannelSlowmodeChange(v: Int) { uiState = uiState.copy(draftChannelSlowmode = v) }
+    fun onDraftChannelNsfwChange(v: Boolean) { uiState = uiState.copy(draftChannelNsfw = v) }
+    fun onDraftRoleNameChange(v: String) { uiState = uiState.copy(draftRoleName = v) }
     fun toggleRegisterMode() { uiState = uiState.copy(isRegisterMode = !uiState.isRegisterMode) }
     fun setSection(s: MainSection) { uiState = uiState.copy(section = s) }
 }

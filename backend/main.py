@@ -129,19 +129,11 @@ def token_required(f):
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header:
-            print("Missing Authorization header")
             return jsonify({"detail": "Missing token"}), 401
-
-        # Robust token extraction
-        token = auth_header
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-
+        token = auth_header.replace("Bearer ", "").strip()
         user_id = decode_token(token)
         if not user_id:
-            print(f"Invalid token: '{token[:10]}...'")
             return jsonify({"detail": "Unauthorized"}), 401
-
         kwargs['current_user_id'] = user_id
         return f(*args, **kwargs)
     decorated.__name__ = f.__name__
@@ -154,7 +146,6 @@ def api_register():
     username = str(payload.get("username", "")).strip()
     password = str(payload.get("password", ""))
     if len(username) < 3: return jsonify({"detail": "Username too short"}), 400
-
     with Session(engine) as db:
         if db.scalar(select(UserModel).where(UserModel.username == username)):
             return jsonify({"detail": "Username taken"}), 400
@@ -181,6 +172,19 @@ def api_login():
             }
         })
 
+@app.route("/profile", methods=['PATCH'])
+@token_required
+def api_update_profile(current_user_id):
+    p = request.json
+    with Session(engine) as db:
+        u = db.get(UserModel, current_user_id)
+        if 'displayName' in p: u.display_name = p['displayName']
+        if 'statusText' in p: u.status_text = p['statusText']
+        if 'bio' in p: u.bio = p['bio']
+        if 'avatarUrl' in p: u.avatar_url = p['avatarUrl']
+        db.commit()
+        return jsonify({"id": u.id, "username": u.username, "displayName": u.display_name})
+
 # --- SERVER ROUTES ---
 @app.route("/servers", methods=['GET'])
 @token_required
@@ -195,7 +199,6 @@ def api_get_servers(current_user_id):
 @token_required
 def api_create_server(current_user_id):
     p = request.json
-    if not p: return jsonify({"detail": "Missing body"}), 400
     name = p.get('name', 'New Server')
     with Session(engine) as db:
         sid, inv = str(uuid.uuid4())[:8], str(uuid.uuid4())[:6].upper()
@@ -209,6 +212,28 @@ def api_create_server(current_user_id):
         db.add(ChannelModel(id=str(uuid.uuid4())[:8], server_id=sid, name="ogólny"))
         db.commit()
         return jsonify({"id": s.id, "name": s.name, "inviteCode": s.invite_code, "ownerId": s.owner_id, "icon": s.icon}), 201
+
+@app.route("/servers/<sid>", methods=['PATCH'])
+@token_required
+def api_update_server(sid, current_user_id):
+    p = request.json
+    with Session(engine) as db:
+        s = db.get(ServerModel, sid)
+        if not s or s.owner_id != current_user_id: return jsonify({"detail": "Forbidden"}), 403
+        if 'name' in p: s.name = p['name']
+        if 'icon' in p: s.icon = p['icon']
+        db.commit()
+        return jsonify({"id": s.id, "name": s.name})
+
+@app.route("/servers/<sid>", methods=['DELETE'])
+@token_required
+def api_delete_server(sid, current_user_id):
+    with Session(engine) as db:
+        s = db.get(ServerModel, sid)
+        if not s or s.owner_id != current_user_id: return jsonify({"detail": "Forbidden"}), 403
+        db.delete(s)
+        db.commit()
+        return "", 204
 
 @app.route("/servers/join/<invite_code>", methods=['POST'])
 @token_required
@@ -229,8 +254,80 @@ def api_join_server(invite_code, current_user_id):
 def api_get_channels(sid, current_user_id):
     with Session(engine) as db:
         chans = db.scalars(select(ChannelModel).where(ChannelModel.server_id == sid).order_by(ChannelModel.category.asc(), ChannelModel.name.asc())).all()
-        return jsonify([{"id": c.id, "name": c.name, "category": c.category, "topic": c.topic} for c in chans])
+        return jsonify([{"id": c.id, "name": c.name, "category": c.category, "topic": c.topic, "slowmodeSeconds": c.slowmode_seconds, "isNsfw": c.is_nsfw} for c in chans])
 
+@app.route("/servers/<sid>/channels", methods=['POST'])
+@token_required
+def api_create_channel(sid, current_user_id):
+    p = request.json
+    with Session(engine) as db:
+        s = db.get(ServerModel, sid)
+        if s.owner_id != current_user_id: return jsonify({"detail": "Forbidden"}), 403
+        c = ChannelModel(id=str(uuid.uuid4())[:8], server_id=sid, name=p['name'], category=p.get('category', 'KANAŁY TEKSTOWE'))
+        db.add(c)
+        db.commit()
+        return jsonify({"id": c.id, "name": c.name})
+
+@app.route("/servers/<sid>/channels/<cid>", methods=['PATCH'])
+@token_required
+def api_update_channel(sid, cid, current_user_id):
+    p = request.json
+    with Session(engine) as db:
+        c = db.get(ChannelModel, cid)
+        if not c: return jsonify({"detail": "Not found"}), 404
+        if 'name' in p: c.name = p['name']
+        if 'topic' in p: c.topic = p['topic']
+        if 'category' in p: c.category = p['category']
+        if 'slowmodeSeconds' in p: c.slowmode_seconds = p['slowmodeSeconds']
+        if 'isNsfw' in p: c.is_nsfw = p['isNsfw']
+        db.commit()
+        return jsonify({"id": c.id, "name": c.name})
+
+@app.route("/servers/<sid>/channels/<cid>", methods=['DELETE'])
+@token_required
+def api_delete_channel(sid, cid, current_user_id):
+    with Session(engine) as db:
+        c = db.get(ChannelModel, cid)
+        if not c: return jsonify({"detail": "Not found"}), 404
+        db.delete(c)
+        db.commit()
+        return "", 204
+
+# --- ROLE ROUTES ---
+@app.route("/servers/<sid>/roles", methods=['GET'])
+@token_required
+def api_get_roles(sid, current_user_id):
+    with Session(engine) as db:
+        roles = db.scalars(select(RoleModel).where(RoleModel.server_id == sid).order_by(RoleModel.position.desc())).all()
+        return jsonify([{"id": r.id, "name": r.name, "permissions": {"manageServer": r.manage_server, "manageChannels": r.manage_channels, "manageRoles": r.manage_roles, "manageMessages": r.manage_messages}} for r in roles])
+
+@app.route("/servers/<sid>/roles", methods=['POST'])
+@token_required
+def api_create_role(sid, current_user_id):
+    p = request.json
+    with Session(engine) as db:
+        r = RoleModel(id=str(uuid.uuid4())[:8], server_id=sid, name=p['name'])
+        db.add(r)
+        db.commit()
+        return jsonify({"id": r.id, "name": r.name})
+
+@app.route("/servers/<sid>/roles/<rid>", methods=['PATCH'])
+@token_required
+def api_update_role(sid, rid, current_user_id):
+    p = request.json
+    with Session(engine) as db:
+        r = db.get(RoleModel, rid)
+        if 'name' in p: r.name = p['name']
+        if 'permissions' in p:
+            perms = p['permissions']
+            r.manage_server = perms.get('manageServer', r.manage_server)
+            r.manage_channels = perms.get('manageChannels', r.manage_channels)
+            r.manage_roles = perms.get('manageRoles', r.manage_roles)
+            r.manage_messages = perms.get('manageMessages', r.manage_messages)
+        db.commit()
+        return jsonify({"id": r.id, "name": r.name})
+
+# --- MEMBER ROUTES ---
 @app.route("/servers/<sid>/members", methods=['GET'])
 @token_required
 def api_get_members(sid, current_user_id):
@@ -241,6 +338,17 @@ def api_get_members(sid, current_user_id):
             "isOnline": m.user.is_online, "roles": [{"id": r.id, "name": r.name} for r in m.roles]
         } for m in mems])
 
+@app.route("/servers/<sid>/members/<uid>/roles/<rid>", methods=['PUT'])
+@token_required
+def api_add_member_role(sid, uid, rid, current_user_id):
+    with Session(engine) as db:
+        m = db.scalar(select(MembershipModel).where(MembershipModel.server_id == sid, MembershipModel.user_id == uid))
+        r = db.get(RoleModel, rid)
+        if r not in m.roles: m.roles.append(r)
+        db.commit()
+        return "", 204
+
+# --- MESSAGE ROUTES ---
 @app.route("/servers/<sid>/channels/<cid>/messages", methods=['GET'])
 @token_required
 def api_get_messages(sid, cid, current_user_id):

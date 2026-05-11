@@ -84,7 +84,35 @@ fun AgreementApp() {
                     pushEnabled = state.pushEnabled,
                     onTogglePush = vm::togglePush,
                     vibrationEnabled = state.vibrationEnabled,
-                    onToggleVibration = vm::toggleVibration
+                    onToggleVibration = vm::toggleVibration,
+                    // Server Editing
+                    draftServerName = state.draftServerName,
+                    onDraftServerNameChange = vm::onDraftServerNameChange,
+                    draftServerIcon = state.draftServerIcon,
+                    onDraftServerIconChange = vm::onDraftServerIconChange,
+                    onSaveServer = vm::saveServerSettings,
+                    // Channel Editing
+                    draftChannelName = state.draftChannelName,
+                    onDraftChannelNameChange = vm::onDraftChannelNameChange,
+                    draftChannelTopic = state.draftChannelTopic,
+                    onDraftChannelTopicChange = vm::onDraftChannelTopicChange,
+                    draftChannelCategory = state.draftChannelCategory,
+                    onDraftChannelCategoryChange = vm::onDraftChannelCategoryChange,
+                    draftChannelSlowmode = state.draftChannelSlowmode,
+                    onDraftChannelSlowmodeChange = vm::onDraftChannelSlowmodeChange,
+                    draftChannelNsfw = state.draftChannelNsfw,
+                    onDraftChannelNsfwChange = vm::onDraftChannelNsfwChange,
+                    onSaveChannel = vm::saveChannelSettings,
+                    // Role Editing
+                    selectedRoleId = state.selectedRoleId,
+                    draftRoleName = state.draftRoleName,
+                    onDraftRoleNameChange = vm::onDraftRoleNameChange,
+                    draftRolePermissions = state.draftRolePermissions,
+                    onDraftRolePermissionsChange = vm::onDraftRolePermissionsChange,
+                    onRoleDraftSelect = vm::onRoleDraftSelect,
+                    onSaveRole = vm::saveRoleSettings,
+                    onCreateRole = vm::createRole,
+                    onDeleteRole = vm::deleteRole
                 )
             }
 

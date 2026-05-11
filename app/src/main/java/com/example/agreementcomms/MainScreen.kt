@@ -61,12 +61,40 @@ fun MainScreen(
     onDeleteChannel: (String) -> Unit,
     onDeleteServer: () -> Unit,
     // Preferences
-    compactMode: Boolean = false,
-    onToggleCompactMode: () -> Unit = {},
-    pushEnabled: Boolean = true,
-    onTogglePush: () -> Unit = {},
-    vibrationEnabled: Boolean = true,
-    onToggleVibration: () -> Unit = {}
+    compactMode: Boolean,
+    onToggleCompactMode: () -> Unit,
+    pushEnabled: Boolean,
+    onTogglePush: () -> Unit,
+    vibrationEnabled: Boolean,
+    onToggleVibration: () -> Unit,
+    // Server Editing
+    draftServerName: String,
+    onDraftServerNameChange: (String) -> Unit,
+    draftServerIcon: String,
+    onDraftServerIconChange: (String) -> Unit,
+    onSaveServer: () -> Unit,
+    // Channel Editing
+    draftChannelName: String,
+    onDraftChannelNameChange: (String) -> Unit,
+    draftChannelTopic: String,
+    onDraftChannelTopicChange: (String) -> Unit,
+    draftChannelCategory: String,
+    onDraftChannelCategoryChange: (String) -> Unit,
+    draftChannelSlowmode: Int,
+    onDraftChannelSlowmodeChange: (Int) -> Unit,
+    draftChannelNsfw: Boolean,
+    onDraftChannelNsfwChange: (Boolean) -> Unit,
+    onSaveChannel: () -> Unit,
+    // Role Editing
+    selectedRoleId: String,
+    draftRoleName: String,
+    onDraftRoleNameChange: (String) -> Unit,
+    draftRolePermissions: RolePermissions,
+    onDraftRolePermissionsChange: (RolePermissions) -> Unit,
+    onRoleDraftSelect: (String) -> Unit,
+    onSaveRole: () -> Unit,
+    onCreateRole: (String) -> Unit,
+    onDeleteRole: (String) -> Unit
 ) {
     val selectedServer = servers.find { it.id == selectedServerId } ?: servers.firstOrNull()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -74,7 +102,7 @@ fun MainScreen(
     var showMembers by rememberSaveable { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- BASE LAYER: Sidebar + Chat ---
+        // --- BASE LAYER: Navigation & Chat ---
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
@@ -148,7 +176,7 @@ fun MainScreen(
             )
         }
 
-        // --- LAYER 1: Members List Overlay (Slide from right) ---
+        // --- OVERLAY: Members List (Right Side) ---
         AnimatedVisibility(
             visible = showMembers && selectedServer != null && section == MainSection.Chat,
             enter = slideInHorizontally(initialOffsetX = { it }),
@@ -164,7 +192,7 @@ fun MainScreen(
             }
         }
 
-        // --- LAYER 2: Settings Overlay (Full-screen slide up) ---
+        // --- OVERLAY: Settings Layer ---
         AnimatedVisibility(
             visible = section != MainSection.Chat,
             enter = slideInVertically(initialOffsetY = { it }),
@@ -188,7 +216,21 @@ fun MainScreen(
 
                     MainSection.ServerSettings -> ServerSettingsScreen(
                         server = selectedServer,
+                        draftName = draftServerName,
+                        onDraftNameChange = onDraftServerNameChange,
+                        draftIcon = draftServerIcon,
+                        onDraftIconChange = onDraftServerIconChange,
+                        onSaveServer = onSaveServer,
                         roles = roles,
+                        onCreateRole = onCreateRole,
+                        onDeleteRole = onDeleteRole,
+                        selectedRoleId = selectedRoleId,
+                        draftRoleName = draftRoleName,
+                        onDraftRoleNameChange = onDraftRoleNameChange,
+                        draftRolePermissions = draftRolePermissions,
+                        onDraftRolePermissionsChange = onDraftRolePermissionsChange,
+                        onRoleDraftSelect = onRoleDraftSelect,
+                        onSaveRole = onSaveRole,
                         members = members,
                         canManageServer = canManageServer,
                         onAssignRole = onAssignRole,
@@ -200,6 +242,17 @@ fun MainScreen(
 
                     MainSection.ChannelSettings -> ChannelSettingsScreen(
                         channel = selectedServer?.channels?.find { it.id == selectedChannelId },
+                        draftName = draftChannelName,
+                        onDraftNameChange = onDraftChannelNameChange,
+                        draftTopic = draftChannelTopic,
+                        onDraftTopicChange = onDraftChannelTopicChange,
+                        draftCategory = draftChannelCategory,
+                        onDraftCategoryChange = onDraftChannelCategoryChange,
+                        draftSlowmode = draftChannelSlowmode,
+                        onDraftSlowmodeChange = onDraftChannelSlowmodeChange,
+                        draftNsfw = draftChannelNsfw,
+                        onDraftNsfwChange = onDraftChannelNsfwChange,
+                        onSaveChannel = onSaveChannel,
                         onDeleteChannel = { cid ->
                             onDeleteChannel(cid)
                             onSectionChange(MainSection.Chat)
